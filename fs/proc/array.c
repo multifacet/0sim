@@ -583,10 +583,14 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 			struct pid *pid, struct task_struct *task)
 {
 	unsigned long size = 0, resident = 0, shared = 0, text = 0, data = 0;
+	unsigned long start_code = 0, end_code = 0, start_data = 0, end_data = 0;
+	unsigned long start_brk = 0, brk = 0, start_stack = 0, mmap_base = 0;
 	struct mm_struct *mm = get_task_mm(task);
 
 	if (mm) {
 		size = task_statm(mm, &shared, &text, &data, &resident);
+		task_segments(mm, &start_code, &end_code, &start_data,
+				&end_data, &start_brk, &brk, &start_stack, &mmap_base);
 		mmput(mm);
 	}
 	/*
@@ -595,15 +599,22 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 	 * seq_printf(m, "%lu %lu %lu %lu 0 %lu 0\n",
 	 *               size, resident, shared, text, data);
 	 */
-	seq_put_decimal_ull(m, "", size);
+/*	seq_put_decimal_ull(m, "", size);
 	seq_put_decimal_ull(m, " ", resident);
 	seq_put_decimal_ull(m, " ", shared);
 	seq_put_decimal_ull(m, " ", text);
 	seq_put_decimal_ull(m, " ", 0);
 	seq_put_decimal_ull(m, " ", data);
 	seq_put_decimal_ull(m, " ", 0);
-	seq_putc(m, '\n');
-
+	seq_putc(m, '\n');*/
+	seq_printf(m, "Size:%lx Resident:%lx Shared:%lx text:%lx 0 data:%lx 0\n",
+			size, resident, shared, text, data);
+	seq_printf(m, "start_code:%lx end_code:%lx\n", start_code, end_code);
+	seq_printf(m, "start_data:%lx end_data:%lx\n", start_data, end_data);
+	seq_printf(m, "start_brk:%lx brk:%lx\n", start_brk, brk);
+	seq_printf(m, "start_stack:%lx end_stack(TODO):%lx\n", start_stack, (unsigned long) 0);
+	seq_printf(m, "mmap_base:%lx\n", mmap_base);
+ 
 	return 0;
 }
 

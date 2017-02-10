@@ -101,6 +101,21 @@ unsigned long task_statm(struct mm_struct *mm,
 	return mm->total_vm;
 }
 
+void task_segments(struct mm_struct *mm, unsigned long *start_code,
+        unsigned long *end_code, unsigned long *start_data,
+        unsigned long *end_data, unsigned long *start_brk, unsigned long
+        *brk, unsigned long *start_stack, unsigned long *mmap_base)
+{
+    *start_code  = PAGE_ALIGN(mm->start_code);
+    *end_code    = PAGE_ALIGN(mm->end_code);
+    *start_data  = PAGE_ALIGN(mm->start_data);
+    *end_data    = PAGE_ALIGN(mm->end_data);
+    *start_brk   = PAGE_ALIGN(mm->start_brk);
+    *brk         = PAGE_ALIGN(mm->brk);
+    *start_stack = PAGE_ALIGN(mm->start_stack);
+    *mmap_base   = PAGE_ALIGN(mm->mmap_base);
+}
+
 #ifdef CONFIG_NUMA
 /*
  * Save get_task_policy() for show_numa_map().
