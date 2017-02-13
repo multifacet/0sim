@@ -297,16 +297,17 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 	unsigned long ret;
 	struct mm_struct *mm = current->mm;
 	unsigned long populate;
+	unsigned long apriori_flag;
 
 	ret = security_mmap_file(file, prot, flag);
 	if (!ret) {
 		if (down_write_killable(&mm->mmap_sem))
 			return -EINTR;
 		ret = do_mmap_pgoff(file, addr, len, prot, flag, pgoff,
-				    &populate);
+				    &populate, &apriori_flag);
 		up_write(&mm->mmap_sem);
 		if (populate)
-			mm_populate(ret, populate);
+			mm_populate(ret, populate, apriori_flag);
 	}
 	return ret;
 }

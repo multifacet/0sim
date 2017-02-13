@@ -358,6 +358,7 @@ struct vm_area_struct {
 	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
 #endif
 	struct vm_userfaultfd_ctx vm_userfaultfd_ctx;
+	unsigned int apriori_en;
 };
 
 struct core_thread {
@@ -513,6 +514,10 @@ struct mm_struct {
 	atomic_long_t hugetlb_usage;
 #endif
 	struct work_struct async_put_work;
+	
+	/* SWAPNIL: Variables for apriori_paging + identity_mapping */
+	unsigned int apriori_paging_en;
+	unsigned int identity_mapping_en;
 };
 
 static inline void mm_init_cpumask(struct mm_struct *mm)

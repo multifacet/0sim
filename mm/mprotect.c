@@ -354,7 +354,7 @@ success:
 	 */
 	if ((oldflags & (VM_WRITE | VM_SHARED | VM_LOCKED)) == VM_LOCKED &&
 			(newflags & VM_WRITE)) {
-		populate_vma_page_range(vma, start, end, NULL);
+		populate_vma_page_range(vma, start, end, NULL, (unsigned long) 0);
 	}
 
 	vm_stat_account(mm, oldflags, -nrpages);

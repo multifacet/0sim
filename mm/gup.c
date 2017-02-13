@@ -5,6 +5,7 @@
 
 #include <linux/mm.h>
 #include <linux/memremap.h>
+#include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/rmap.h>
 #include <linux/swap.h>
@@ -20,6 +21,12 @@
 
 #include "internal.h"
 
+/*extern int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *vma,
+                                    unsigned long addr, unsigned long nr_pages, unsigned int flags);
+
+extern int fill_page_table_manually(struct mm_struct *mm , struct vm_area_struct *vma, 
+				unsigned long addr, unsigned long nr_pages);
+*/
 static struct page *no_page_table(struct vm_area_struct *vma,
 		unsigned int flags)
 {
@@ -362,7 +369,9 @@ unmap:
  * If it is, *@nonblocking will be set to 0 and -EBUSY returned.
  */
 static int faultin_page(struct task_struct *tsk, struct vm_area_struct *vma,
-		unsigned long address, unsigned int *flags, int *nonblocking)
+		unsigned long address, unsigned int *flags, int *nonblocking, 
+		unsigned long apriori_flag, unsigned int *apriori_fault_flags,
+		int apriori_order)
 {
 	unsigned int fault_flags = 0;
 	int ret;
@@ -379,8 +388,11 @@ static int faultin_page(struct task_struct *tsk, struct vm_area_struct *vma,
 		fault_flags |= FAULT_FLAG_WRITE;
 	if (*flags & FOLL_REMOTE)
 		fault_flags |= FAULT_FLAG_REMOTE;
-	if (nonblocking)
-		fault_flags |= FAULT_FLAG_ALLOW_RETRY;
+	if (nonblocking) {
+		if (apriori_flag != 2) {
+			fault_flags |= FAULT_FLAG_ALLOW_RETRY;
+		}
+	}
 	if (*flags & FOLL_NOWAIT)
 		fault_flags |= FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_RETRY_NOWAIT;
 	if (*flags & FOLL_TRIED) {
@@ -388,7 +400,24 @@ static int faultin_page(struct task_struct *tsk, struct vm_area_struct *vma,
 		fault_flags |= FAULT_FLAG_TRIED;
 	}
 
-	ret = handle_mm_fault(vma, address, fault_flags);
+	/*
+	 *  !!_AprioriPaging_!!
+	 *  In this control statement we check if the apriori_flag is activated
+	 *
+	 *  if true we call handle_mm_fault_apriori_paging
+	 *  else we just call handle_mm_fault (default option)
+	 *
+	 *  We didn't change the handle_mm_fault() because it is
+	 *  referenced a lot of times in the architecture dependent codes
+	 */
+
+	if ((apriori_flag == 1) || (apriori_flag == 2)) {
+		ret = handle_mm_fault_apriori_paging(vma, address, fault_flags, apriori_flag, apriori_order);
+		*apriori_fault_flags = fault_flags;
+	}
+	else
+		ret = handle_mm_fault(vma, address, fault_flags);
+
 	if (ret & VM_FAULT_ERROR) {
 		if (ret & VM_FAULT_OOM)
 			return -ENOMEM;
@@ -529,11 +558,14 @@ static int check_vma_flags(struct vm_area_struct *vma, unsigned long gup_flags)
 static long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		unsigned long start, unsigned long nr_pages,
 		unsigned int gup_flags, struct page **pages,
-		struct vm_area_struct **vmas, int *nonblocking)
+		struct vm_area_struct **vmas, int *nonblocking, 
+		unsigned long apriori_flag)
 {
 	long i = 0;
 	unsigned int page_mask;
 	struct vm_area_struct *vma = NULL;
+	int apriori_order = 0;
+	unsigned int apriori_fault_flags = 0;
 
 	if (!nr_pages)
 		return 0;
@@ -552,6 +584,52 @@ static long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		struct page *page;
 		unsigned int foll_flags = gup_flags;
 		unsigned int page_increm;
+            /*
+             *  !!_AprioriPaging_!!
+             *
+             *  First it checks whether our flag has been used for allocation.
+             *  Then it checks if activation is set for this allocation.
+             *  Finally it checks the process id user-space allocation function.
+             *
+             *  In this statement we should check free pages then we should calculate
+             *  new value of order. With this order number of pages should be re-calculated.
+             *
+             *  Of course, we shouldn't forget to set to 0 our map flag variable.
+             */
+                       
+	    if ((apriori_flag == 1) || (apriori_flag == 2)) {
+                int j;
+                struct pglist_data* node_0;
+                struct zone* pzone;
+                node_0 = NODE_DATA(0);
+
+		apriori_order = 0;
+
+//                pzone = &node_0->node_zones[ZONE_DMA32];
+                pzone = &node_0->node_zones[ZONE_NORMAL];
+
+                if ( pzone == NULL ) {
+                    printk(KERN_INFO "NO SUCH A ZONE!\n");
+                    return 0;
+                }
+
+                if ( pzone->free_area == NULL) {
+                    printk(KERN_INFO "NO FREE AREA IN THIS ZONE!\n");
+                    return 0;
+                }
+
+                // we need to optimize this part for the case that the order we want
+                // does not have any slots but higher orders do have and can be spitted to serve this request
+                for (j = MAX_ORDER-1 ; j >= 0 ; j--) {
+                    if (  pzone->free_area[j].nr_free > 0 ) {
+                        if ( ( 1 << j ) <= nr_pages ) {
+                            apriori_order = j;
+                            break;
+                        }
+                    }
+                }
+            }
+
 
 		/* first iteration or cross vma bound */
 		if (!vma || start >= vma->vm_end) {
@@ -588,7 +666,8 @@ retry:
 		if (!page) {
 			int ret;
 			ret = faultin_page(tsk, vma, start, &foll_flags,
-					nonblocking);
+					nonblocking, apriori_flag, &apriori_fault_flags,
+					apriori_order);
 			switch (ret) {
 			case 0:
 				goto retry;
@@ -626,6 +705,36 @@ next_page:
 		if (page_increm > nr_pages)
 			page_increm = nr_pages;
 		i += page_increm;
+            /*
+             *  !!_AprioriPaging_!!
+             *  In this control statement we check if our order works
+             *  then we set page_increm with the number of new order
+             *
+             *  page_increm variables effects how many times loop will
+             *  work by changing the virtual adresses of pages
+             *
+             */
+		if ((apriori_flag == 1) || (apriori_flag == 2))
+			page_increm = (unsigned int)(1 << (apriori_order));
+		else
+			page_increm = 1 + (~(start >> PAGE_SHIFT) & page_mask);
+
+		if (page_increm > nr_pages)
+			page_increm = nr_pages;
+		i += page_increm;
+
+		/*
+		 *  !!_AprioriPaging_!!
+		 * In this control statement we call a specific function which
+		 *  calculates new pages address and adds page table entries to page table
+		 */
+
+		if ( apriori_flag == 1 ) {
+			fill_page_table_manually(mm, vma ,start, page_increm);
+		}
+		else if (apriori_flag == 2) {
+			fill_page_table_manually_cow(mm, vma ,start, page_increm, apriori_fault_flags);
+		}
 		start += page_increm * PAGE_SIZE;
 		nr_pages -= page_increm;
 	} while (nr_pages);
@@ -761,7 +870,7 @@ static __always_inline long __get_user_pages_locked(struct task_struct *tsk,
 	lock_dropped = false;
 	for (;;) {
 		ret = __get_user_pages(tsk, mm, start, nr_pages, flags, pages,
-				       vmas, locked);
+				       vmas, locked, (unsigned long) 0);
 		if (!locked)
 			/* VM_FAULT_RETRY couldn't trigger, bypass */
 			return ret;
@@ -801,7 +910,7 @@ static __always_inline long __get_user_pages_locked(struct task_struct *tsk,
 		lock_dropped = true;
 		down_read(&mm->mmap_sem);
 		ret = __get_user_pages(tsk, mm, start, 1, flags | FOLL_TRIED,
-				       pages, NULL, NULL);
+				       pages, NULL, NULL, (unsigned long) 0);
 		if (ret != 1) {
 			BUG_ON(ret > 1);
 			if (!pages_done)
@@ -1008,7 +1117,8 @@ EXPORT_SYMBOL(get_user_pages);
  * released.  If it's released, *@nonblocking will be set to 0.
  */
 long populate_vma_page_range(struct vm_area_struct *vma,
-		unsigned long start, unsigned long end, int *nonblocking)
+		unsigned long start, unsigned long end, int *nonblocking,
+		unsigned long apriori_flag)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	unsigned long nr_pages = (end - start) / PAGE_SIZE;
@@ -1043,7 +1153,7 @@ long populate_vma_page_range(struct vm_area_struct *vma,
 	 * not result in a stack expansion that recurses back here.
 	 */
 	return __get_user_pages(current, mm, start, nr_pages, gup_flags,
-				NULL, NULL, nonblocking);
+				NULL, NULL, nonblocking, apriori_flag);
 }
 
 /*
@@ -1053,13 +1163,14 @@ long populate_vma_page_range(struct vm_area_struct *vma,
  * flags. VMAs must be already marked with the desired vm_flags, and
  * mmap_sem must not be held.
  */
-int __mm_populate(unsigned long start, unsigned long len, int ignore_errors)
+int __mm_populate(unsigned long start, unsigned long len, int ignore_errors,
+			unsigned long apriori_flag)
 {
 	struct mm_struct *mm = current->mm;
 	unsigned long end, nstart, nend;
 	struct vm_area_struct *vma = NULL;
 	int locked = 0;
-	long ret = 0;
+	long ret = 0;	
 
 	VM_BUG_ON(start & ~PAGE_MASK);
 	VM_BUG_ON(len != PAGE_ALIGN(len));
@@ -1092,7 +1203,7 @@ int __mm_populate(unsigned long start, unsigned long len, int ignore_errors)
 		 * double checks the vma flags, so that it won't mlock pages
 		 * if the vma was already munlocked.
 		 */
-		ret = populate_vma_page_range(vma, nstart, nend, &locked);
+		ret = populate_vma_page_range(vma, nstart, nend, &locked, apriori_flag);
 		if (ret < 0) {
 			if (ignore_errors) {
 				ret = 0;
@@ -1127,10 +1238,9 @@ struct page *get_dump_page(unsigned long addr)
 {
 	struct vm_area_struct *vma;
 	struct page *page;
-
 	if (__get_user_pages(current, current->mm, addr, 1,
 			     FOLL_FORCE | FOLL_DUMP | FOLL_GET, &page, &vma,
-			     NULL) < 1)
+			     NULL, (unsigned long) 0) < 1)
 		return NULL;
 	flush_cache_page(vma, addr, page_to_pfn(page));
 	return page;

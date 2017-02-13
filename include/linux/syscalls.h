@@ -902,5 +902,9 @@ asmlinkage long sys_pkey_mprotect(unsigned long start, size_t len,
 				  unsigned long prot, int pkey);
 asmlinkage long sys_pkey_alloc(unsigned long flags, unsigned long init_val);
 asmlinkage long sys_pkey_free(int pkey);
+asmlinkage long sys_order_count(pid_t pid, int condition);
+asmlinkage long sys_apriori_paging_alloc(const char __user** proc_name, unsigned int num_procs, int option);
+//asmlinkage long sys_init_badger_trap(const char __user** process_name, unsigned long num_procs, int options);
+asmlinkage long sys_init_identity_map(const char __user** process_name, unsigned int num_procs, int options);
 
 #endif

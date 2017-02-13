@@ -497,7 +497,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	unsigned long ret = -EINVAL;
 	unsigned long charged = 0;
 	bool locked = false;
-
+	unsigned long apriori_flag = 0;
 	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
 		return ret;
 
@@ -601,6 +601,6 @@ out:
 	}
 	up_write(&current->mm->mmap_sem);
 	if (locked && new_len > old_len)
-		mm_populate(new_addr + old_len, new_len - old_len);
+		mm_populate(new_addr + old_len, new_len - old_len, apriori_flag);
 	return ret;
 }

@@ -40,6 +40,7 @@ void page_writeback_init(void);
 
 int do_swap_page(struct vm_fault *vmf);
 
+//int __do_fault(struct vm_fault *vmf);
 void free_pgtables(struct mmu_gather *tlb, struct vm_area_struct *start_vma,
 		unsigned long floor, unsigned long ceiling);
 
@@ -271,7 +272,8 @@ void __vma_link_list(struct mm_struct *mm, struct vm_area_struct *vma,
 
 #ifdef CONFIG_MMU
 extern long populate_vma_page_range(struct vm_area_struct *vma,
-		unsigned long start, unsigned long end, int *nonblocking);
+		unsigned long start, unsigned long end, int *nonblocking,
+		unsigned long apriori_flag);
 extern void munlock_vma_pages_range(struct vm_area_struct *vma,
 			unsigned long start, unsigned long end);
 static inline void munlock_vma_pages_all(struct vm_area_struct *vma)

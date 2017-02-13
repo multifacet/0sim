@@ -703,7 +703,7 @@ static __must_check int do_mlock(unsigned long start, size_t len, vm_flags_t fla
 	if (error)
 		return error;
 
-	error = __mm_populate(start, len, 0);
+	error = __mm_populate(start, len, 0, (unsigned long) 0);
 	if (error)
 		return __mlock_posix_error_return(error);
 	return 0;
@@ -814,7 +814,7 @@ SYSCALL_DEFINE1(mlockall, int, flags)
 		ret = apply_mlockall_flags(flags);
 	up_write(&current->mm->mmap_sem);
 	if (!ret && (flags & MCL_CURRENT))
-		mm_populate(0, TASK_SIZE);
+		mm_populate(0, TASK_SIZE, (unsigned long) 0);
 
 	return ret;
 }

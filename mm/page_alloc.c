@@ -70,6 +70,14 @@
 #include <asm/div64.h>
 #include "internal.h"
 
+/*
+ *  !!_AprioriPaging_!!
+ *  We use this variables to proc file of order count !!
+ */
+extern int order_count_en;
+extern pid_t order_count_process;
+extern unsigned long profile_hist_alloc_order[MAX_ORDER];
+
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
 #define MIN_PERCPU_PAGELIST_FRACTION	(8)
@@ -1796,6 +1804,11 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 	/* Find a page of the appropriate size in the preferred list */
 	for (current_order = order; current_order < MAX_ORDER; ++current_order) {
 		area = &(zone->free_area[current_order]);
+		if ( current->mm && current->mm->apriori_paging_en == 1 ) {
+			// from memory-mapped files
+			profile_hist_alloc_order[order]++;
+		}
+
 		page = list_first_entry_or_null(&area->free_list[migratetype],
 							struct page, lru);
 		if (!page)
@@ -2619,6 +2632,9 @@ struct page *buffered_rmqueue(struct zone *preferred_zone,
 		struct per_cpu_pages *pcp;
 		struct list_head *list;
 
+		if ( current->mm && current->mm->apriori_paging_en == 1 ) {
+			profile_hist_alloc_order[order]++;
+		}
 		local_irq_save(flags);
 		do {
 			pcp = &this_cpu_ptr(zone->pageset)->pcp;
@@ -2641,6 +2657,9 @@ struct page *buffered_rmqueue(struct zone *preferred_zone,
 
 		} while (check_new_pcp(page));
 	} else {
+		if ( current->mm && current->mm->apriori_paging_en == 1 ) {
+			profile_hist_alloc_order[order]++;
+		}
 		/*
 		 * We most definitely don't want callers attempting to
 		 * allocate greater than order-1 page units with __GFP_NOFAIL.

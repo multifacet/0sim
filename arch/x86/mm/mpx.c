@@ -43,7 +43,7 @@ static inline unsigned long mpx_bt_size_bytes(struct mm_struct *mm)
 static unsigned long mpx_mmap(unsigned long len)
 {
 	struct mm_struct *mm = current->mm;
-	unsigned long addr, populate;
+	unsigned long addr, populate, apriori_flag = 0;
 
 	/* Only bounds table can be allocated here */
 	if (len != mpx_bt_size_bytes(mm))
@@ -51,10 +51,11 @@ static unsigned long mpx_mmap(unsigned long len)
 
 	down_write(&mm->mmap_sem);
 	addr = do_mmap(NULL, 0, len, PROT_READ | PROT_WRITE,
-			MAP_ANONYMOUS | MAP_PRIVATE, VM_MPX, 0, &populate);
+			MAP_ANONYMOUS | MAP_PRIVATE, VM_MPX, 0, &populate,
+			&apriori_flag);
 	up_write(&mm->mmap_sem);
 	if (populate)
-		mm_populate(addr, populate);
+		mm_populate(addr, populate, apriori_flag);
 
 	return addr;
 }

@@ -67,6 +67,9 @@
 
 #include <trace/events/sched.h>
 
+extern int is_process_of_identity_mapping(const char* proc_name);
+extern int is_process_of_apriori_paging(const char* proc_name);
+
 int suid_dumpable = 0;
 
 static LIST_HEAD(formats);
@@ -1317,6 +1320,27 @@ void setup_new_exec(struct linux_binprm * bprm)
 
 	perf_event_exec();
 	__set_task_comm(current, kbasename(bprm->filename), true);
+
+        /* SWAPNIL: Check if we need to enable apriori paging for this process*/
+        if(is_process_of_apriori_paging(current->comm))
+        {
+                current->mm->apriori_paging_en = 1;
+        }
+
+        if(current && current->real_parent && current->real_parent != current && current->real_parent->mm && current->real_parent->mm->apriori_paging_en)
+        {
+                current->mm->apriori_paging_en = 1;
+        }
+        /* SWAPNIL: Check if we need to enable identity_mapping for this process*/
+        if(is_process_of_identity_mapping(current->comm))
+        {
+                current->mm->identity_mapping_en = 1;
+        }
+
+        if(current && current->real_parent && current->real_parent != current && current->real_parent->mm && current->real_parent->mm->identity_mapping_en)
+        {
+                current->mm->identity_mapping_en = 1;
+        }
 
 	/* Set the new mm task size. We have to do that late because it may
 	 * depend on TIF_32BIT which is only updated in flush_thread() on

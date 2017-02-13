@@ -1236,9 +1236,15 @@ int invalidate_inode_page(struct page *page);
 #ifdef CONFIG_MMU
 extern int handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 		unsigned int flags);
+extern int handle_mm_fault_apriori_paging(struct vm_area_struct *vma,
+            unsigned long address, unsigned int flags, unsigned long apriori_flag, int apriori_order);
 extern int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 			    unsigned long address, unsigned int fault_flags,
 			    bool *unlocked);
+extern int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *vma,
+                                    unsigned long addr, unsigned int nr_pages, unsigned int flags);
+extern int fill_page_table_manually(struct mm_struct *mm , struct vm_area_struct *vma, 
+				unsigned long addr, unsigned int nr_pages);
 #else
 static inline int handle_mm_fault(struct vm_area_struct *vma,
 		unsigned long address, unsigned int flags)
@@ -2020,27 +2026,29 @@ extern unsigned long mmap_region(struct file *file, unsigned long addr,
 	unsigned long len, vm_flags_t vm_flags, unsigned long pgoff);
 extern unsigned long do_mmap(struct file *file, unsigned long addr,
 	unsigned long len, unsigned long prot, unsigned long flags,
-	vm_flags_t vm_flags, unsigned long pgoff, unsigned long *populate);
+	vm_flags_t vm_flags, unsigned long pgoff, unsigned long *populate, unsigned long *apriori_flag);
 extern int do_munmap(struct mm_struct *, unsigned long, size_t);
 
 static inline unsigned long
 do_mmap_pgoff(struct file *file, unsigned long addr,
 	unsigned long len, unsigned long prot, unsigned long flags,
-	unsigned long pgoff, unsigned long *populate)
+	unsigned long pgoff, unsigned long *populate, unsigned long *apriori_flag)
 {
-	return do_mmap(file, addr, len, prot, flags, 0, pgoff, populate);
+	return do_mmap(file, addr, len, prot, flags, 0, pgoff, populate, apriori_flag);
 }
 
 #ifdef CONFIG_MMU
 extern int __mm_populate(unsigned long addr, unsigned long len,
-			 int ignore_errors);
-static inline void mm_populate(unsigned long addr, unsigned long len)
+			 int ignore_errors, unsigned long apriori_flag);
+static inline void mm_populate(unsigned long addr, unsigned long len,
+			unsigned long apriori_flag)
 {
 	/* Ignore errors */
-	(void) __mm_populate(addr, len, 1);
+	(void) __mm_populate(addr, len, 1, apriori_flag);
 }
 #else
-static inline void mm_populate(unsigned long addr, unsigned long len) {}
+static inline void mm_populate(unsigned long addr, unsigned long len, 
+			unsigned long apriori_flag) {}
 #endif
 
 /* These take the mm semaphore themselves */

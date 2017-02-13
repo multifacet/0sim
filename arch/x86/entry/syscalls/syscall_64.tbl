@@ -338,7 +338,10 @@
 329	common	pkey_mprotect		sys_pkey_mprotect
 330	common	pkey_alloc		sys_pkey_alloc
 331	common	pkey_free		sys_pkey_free
-
+332	64	order_count		sys_order_count
+333     64      apriori_paging_alloc    sys_apriori_paging_alloc
+#334     64      init_badger_trap        sys_init_badger_trap
+335     64      init_identity_map       sys_init_identity_map
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation.

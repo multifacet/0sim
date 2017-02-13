@@ -184,7 +184,8 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 	unsigned long newbrk, oldbrk;
 	struct mm_struct *mm = current->mm;
 	unsigned long min_brk;
-	bool populate;
+	bool populate = 0;
+	unsigned long apriori_flag = 0;
 
 	if (down_write_killable(&mm->mmap_sem))
 		return -EINTR;
@@ -239,8 +240,13 @@ set_brk:
 	mm->brk = brk;
 	populate = newbrk > oldbrk && (mm->def_flags & VM_LOCKED) != 0;
 	up_write(&mm->mmap_sem);
+	if( mm &&  mm->apriori_paging_en == 1)
+	{
+		apriori_flag = 1;
+		populate = newbrk > oldbrk;
+	}
 	if (populate)
-		mm_populate(oldbrk, newbrk - oldbrk);
+		mm_populate(oldbrk, newbrk - oldbrk, apriori_flag);
 	return brk;
 
 out:
@@ -1304,12 +1310,14 @@ static inline int mlock_future_check(struct mm_struct *mm,
 unsigned long do_mmap(struct file *file, unsigned long addr,
 			unsigned long len, unsigned long prot,
 			unsigned long flags, vm_flags_t vm_flags,
-			unsigned long pgoff, unsigned long *populate)
+			unsigned long pgoff, unsigned long *populate,
+			unsigned long *apriori_flag)
 {
 	struct mm_struct *mm = current->mm;
 	int pkey = 0;
 
 	*populate = 0;
+	*apriori_flag = 0;
 
 	if (!len)
 		return -EINVAL;
@@ -1452,6 +1460,60 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	    ((vm_flags & VM_LOCKED) ||
 	     (flags & (MAP_POPULATE | MAP_NONBLOCK)) == MAP_POPULATE))
 		*populate = len;
+               
+    /*
+     *  !!_AprioriPaging_!!
+     * This control statement must be checked and optimized !!
+     *
+     * Assume that we use mmap with following flags :
+     * ( MAP_PRIVATE | MAP_ANONYMOUS | MAP_APRIORI_PAGING )
+     *
+     * We initialize *populate variable with value of len
+     * - as MAP_POPULATE exactly does - in our control statement.
+     */
+
+    if ( !IS_ERR_VALUE(addr) ) {
+        if ( (( flags &  MAP_APRIORI_PAGING ) ==  MAP_APRIORI_PAGING ) || ( mm &&  mm->apriori_paging_en == 1  &&  ( ( flags & (MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED) ) == ( MAP_PRIVATE | MAP_ANONYMOUS ))))
+//        if ( (( flags &  MAP_APRIORI_PAGING ) ==  MAP_APRIORI_PAGING ) || ( mm &&  mm->apriori_paging_en == 1 && (!((flags & (MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE)) == (MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE)))))
+        {
+            *apriori_flag = 1;
+            *populate = len;
+        }
+	else if( mm &&  mm->apriori_paging_en == 1  &&  ( ( flags & (MAP_EXECUTABLE | MAP_DENYWRITE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED) ) == (MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS )))
+	{
+            *apriori_flag = 1;
+            *populate = len;
+	}
+/*	else if( mm &&  mm->apriori_paging_en == 1  &&  ( ( flags & (MAP_EXECUTABLE | MAP_DENYWRITE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED) ) == (MAP_FIXED | MAP_PRIVATE )))
+	{
+            *apriori_flag = 1;
+            *populate = len;
+	}
+	else if( mm &&  mm->apriori_paging_en == 1  &&  ( ( flags & (MAP_EXECUTABLE | MAP_DENYWRITE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED) ) == (MAP_PRIVATE )))
+	{
+            *apriori_flag = 1;
+            *populate = len;
+	}
+*/
+	else if ( (( flags &  MAP_APRIORI_PAGING ) ==  MAP_APRIORI_PAGING ) ||
+             ( mm &&  mm->apriori_paging_en == 1  &&  ( flags == MAP_PRIVATE )) ||
+             ( mm &&  mm->apriori_paging_en == 1  &&  ( flags == ( MAP_PRIVATE | MAP_POPULATE))))
+        {
+            if (prot == (PROT_READ | PROT_WRITE)) {
+                //mm->apriori_paging_mfile_en = 1;
+                *apriori_flag = 2; // memory mapped files
+                *populate = len;
+                //printk(KERN_INFO "mmap for memory mapped file - len: %ld...\n", len);
+            }
+        }
+	else if (mm &&  mm->apriori_paging_en == 1)
+	{
+		printk("VMA not under Apriori Paging Addr: %lx Len: %lx Flags: %lx Prot: %lx\n",addr,len,flags,prot);
+	}
+    }
+
+
+
 	return addr;
 }
 
@@ -2368,6 +2430,7 @@ struct vm_area_struct *
 find_extend_vma(struct mm_struct *mm, unsigned long addr)
 {
 	struct vm_area_struct *vma, *prev;
+	unsigned long apriori_flag = 0;
 
 	addr &= PAGE_MASK;
 	vma = find_vma_prev(mm, addr, &prev);
@@ -2376,7 +2439,7 @@ find_extend_vma(struct mm_struct *mm, unsigned long addr)
 	if (!prev || expand_stack(prev, addr))
 		return NULL;
 	if (prev->vm_flags & VM_LOCKED)
-		populate_vma_page_range(prev, addr, prev->vm_end, NULL);
+		populate_vma_page_range(prev, addr, prev->vm_end, NULL, apriori_flag);
 	return prev;
 }
 #else
@@ -2398,6 +2461,7 @@ find_extend_vma(struct mm_struct *mm, unsigned long addr)
 {
 	struct vm_area_struct *vma;
 	unsigned long start;
+	unsigned long apriori_flag = 0;
 
 	addr &= PAGE_MASK;
 	vma = find_vma(mm, addr);
@@ -2411,7 +2475,7 @@ find_extend_vma(struct mm_struct *mm, unsigned long addr)
 	if (expand_stack(vma, addr))
 		return NULL;
 	if (vma->vm_flags & VM_LOCKED)
-		populate_vma_page_range(vma, addr, start, NULL);
+		populate_vma_page_range(vma, addr, start, NULL, apriori_flag);
 	return vma;
 }
 #endif
@@ -2704,6 +2768,7 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 	unsigned long populate = 0;
 	unsigned long ret = -EINVAL;
 	struct file *file;
+	unsigned long apriori_flag = 0;
 
 	pr_warn_once("%s (%d) uses deprecated remap_file_pages() syscall. See Documentation/vm/remap_file_pages.txt.\n",
 		     current->comm, current->pid);
@@ -2780,12 +2845,12 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 
 	file = get_file(vma->vm_file);
 	ret = do_mmap_pgoff(vma->vm_file, start, size,
-			prot, flags, pgoff, &populate);
+			prot, flags, pgoff, &populate, &apriori_flag);
 	fput(file);
 out:
 	up_write(&mm->mmap_sem);
 	if (populate)
-		mm_populate(ret, populate);
+		mm_populate(ret, populate, apriori_flag);
 	if (!IS_ERR_VALUE(ret))
 		ret = 0;
 	return ret;
@@ -2894,6 +2959,7 @@ int vm_brk(unsigned long addr, unsigned long len)
 	struct mm_struct *mm = current->mm;
 	int ret;
 	bool populate;
+	unsigned long apriori_flag = mm->apriori_paging_en;
 
 	if (down_write_killable(&mm->mmap_sem))
 		return -EINTR;
@@ -2902,7 +2968,7 @@ int vm_brk(unsigned long addr, unsigned long len)
 	populate = ((mm->def_flags & VM_LOCKED) != 0);
 	up_write(&mm->mmap_sem);
 	if (populate && !ret)
-		mm_populate(addr, len);
+		mm_populate(addr, len, apriori_flag);
 	return ret;
 }
 EXPORT_SYMBOL(vm_brk);

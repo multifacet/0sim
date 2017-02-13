@@ -112,11 +112,12 @@ unsigned int kobjsize(const void *objp)
 static long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		      unsigned long start, unsigned long nr_pages,
 		      unsigned int foll_flags, struct page **pages,
-		      struct vm_area_struct **vmas, int *nonblocking)
+		      struct vm_area_struct **vmas, int *nonblocking, unsigned long apriori_flag)
 {
 	struct vm_area_struct *vma;
 	unsigned long vm_flags;
 	int i;
+	unsigned long apriori_flag = 0;
 
 	/* calculate required read or write permissions.
 	 * If FOLL_FORCE is set, we only require the "MAY" flags.

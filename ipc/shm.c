@@ -1107,6 +1107,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr,
 	struct path path;
 	fmode_t f_mode;
 	unsigned long populate = 0;
+	unsigned long apriori_flag = 0;
 
 	err = -EINVAL;
 	if (shmid < 0)
@@ -1222,7 +1223,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr,
 			goto invalid;
 	}
 
-	addr = do_mmap_pgoff(file, addr, size, prot, flags, 0, &populate);
+	addr = do_mmap_pgoff(file, addr, size, prot, flags, 0, &populate, &apriori_flag);
 	*raddr = addr;
 	err = 0;
 	if (IS_ERR_VALUE(addr))
@@ -1230,7 +1231,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr,
 invalid:
 	up_write(&current->mm->mmap_sem);
 	if (populate)
-		mm_populate(addr, populate);
+		mm_populate(addr, populate, apriori_flag);
 
 out_fput:
 	fput(file);
