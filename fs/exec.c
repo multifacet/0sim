@@ -1321,7 +1321,8 @@ void setup_new_exec(struct linux_binprm * bprm)
 	perf_event_exec();
 	__set_task_comm(current, kbasename(bprm->filename), true);
 
-        /* SWAPNIL: Check if we need to enable apriori paging for this process*/
+	/* SWAPNIL: Check if we need to enable apriori paging for this process*/
+        current->mm->apriori_paging_en = 0;
         if(is_process_of_apriori_paging(current->comm))
         {
                 current->mm->apriori_paging_en = 1;
@@ -1332,15 +1333,21 @@ void setup_new_exec(struct linux_binprm * bprm)
                 current->mm->apriori_paging_en = 1;
         }
         /* SWAPNIL: Check if we need to enable identity_mapping for this process*/
+        current->mm->identity_mapping_en = 0;
         if(is_process_of_identity_mapping(current->comm))
         {
                 current->mm->identity_mapping_en = 1;
+		printk("identity_mapping enabled for proc:%s\n", current->comm);
+		//arch_pick_mmap_layout(current->mm);
         }
 
         if(current && current->real_parent && current->real_parent != current && current->real_parent->mm && current->real_parent->mm->identity_mapping_en)
         {
                 current->mm->identity_mapping_en = 1;
+		printk("Discard after testing: identity_mapping enabled for child or thread\n");
+		//arch_pick_mmap_layout(current->mm);
         }
+
 
 	/* Set the new mm task size. We have to do that late because it may
 	 * depend on TIF_32BIT which is only updated in flush_thread() on

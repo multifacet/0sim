@@ -28,6 +28,7 @@ SYSCALL_DEFINE3(init_identity_map, const char __user**, proc_name, unsigned int,
 
 
     if ( option > 0 ) {
+	start_tracking = 1;
         for ( i = 0 ; i < CONFIG_NR_CPUS ; i++ ) {
             if ( i < num_procs )
                 ret = strncpy_from_user(proc, proc_name[i], MAX_PROC_NAME_LEN);
@@ -63,6 +64,9 @@ int is_process_of_identity_mapping(const char* proc_name)
 {
 
     unsigned int i;
+	
+    if (start_tracking == 0)
+	return 0;
 
     for ( i = 0 ; i < CONFIG_NR_CPUS ; i++ )     {
         if (!strncmp(proc_name,identity_mapping_process[i],MAX_PROC_NAME_LEN))

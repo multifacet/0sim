@@ -93,6 +93,15 @@ static unsigned long mmap_base(unsigned long rnd)
 	return PAGE_ALIGN(TASK_SIZE - gap - rnd);
 }
 
+static unsigned long mmap_lower_base(unsigned long start_code,
+					unsigned long rnd)
+{
+	unsigned long gap = 4*MIN_GAP;
+	return PAGE_ALIGN(start_code - gap - rnd);
+}
+
+
+
 /*
  * This function, called very early during the creation of a new
  * process VM image, sets up which VM layout function to use:
@@ -109,6 +118,12 @@ void arch_pick_mmap_layout(struct mm_struct *mm)
 	if (mmap_is_legacy()) {
 		mm->mmap_base = mm->mmap_legacy_base;
 		mm->get_unmapped_area = arch_get_unmapped_area;
+	} else if(mm->identity_mapping_en == 1) {
+		printk("Pushing mmap below code segment for identity mapping\n");
+		printk("start_code:%lx", mm->start_code);
+		mm->mmap_base = mmap_lower_base(mm->start_code, random_factor);
+		printk("mmap_base:%lx", mm->mmap_base);
+		mm->get_unmapped_area = arch_get_unmapped_area_topdown;
 	} else {
 		mm->mmap_base = mmap_base(random_factor);
 		mm->get_unmapped_area = arch_get_unmapped_area_topdown;

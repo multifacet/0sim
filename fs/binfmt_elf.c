@@ -852,6 +852,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
 		current->flags |= PF_RANDOMIZE;
 
+	/* Swapnil: where mmap_base gets fixed, and mm->identity_mapping_en = 1 */
 	setup_new_exec(bprm);
 	install_exec_creds(bprm);
 
@@ -987,7 +988,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	end_code += load_bias;
 	start_data += load_bias;
 	end_data += load_bias;
-
+	
 	/* Calling set_brk effectively mmaps the pages that we need
 	 * for the bss and break sections.  We must do this before
 	 * mapping in the interpreter, to make sure it doesn't wind
@@ -1056,6 +1057,12 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	current->mm->end_data = end_data;
 	current->mm->start_stack = bprm->p;
 
+
+	if(current->mm->identity_mapping_en == 1) {
+	        arch_pick_mmap_layout(current->mm);
+//		current->mm->brk = current->mm->mmap_base;
+	}
+	/* Swapnil: where brk gets randomized */
 	if ((current->flags & PF_RANDOMIZE) && (randomize_va_space > 1)) {
 		current->mm->brk = current->mm->start_brk =
 			arch_randomize_brk(current->mm);
