@@ -298,6 +298,10 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 	struct mm_struct *mm = current->mm;
 	unsigned long populate;
 	unsigned long apriori_flag;
+	
+	if(mm->identity_mapping_en == 1) 
+		printk("vm_mmap_pgoff addr:%lx len:%lx prot:%lx flag:%lx\n",
+			addr, len, prot, flag);
 
 	ret = security_mmap_file(file, prot, flag);
 	if (!ret) {

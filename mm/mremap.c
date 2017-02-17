@@ -248,7 +248,7 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 	return len + old_addr - old_end;	/* how much done */
 }
 
-static unsigned long move_vma(struct vm_area_struct *vma,
+unsigned long move_vma(struct vm_area_struct *vma,
 		unsigned long old_addr, unsigned long old_len,
 		unsigned long new_len, unsigned long new_addr, bool *locked)
 {

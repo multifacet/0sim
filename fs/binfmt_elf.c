@@ -47,6 +47,15 @@
 #define user_siginfo_t siginfo_t
 #endif
 
+static unsigned long get_pa(unsigned long addr) {
+	unsigned long pa = 0;
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	if(follow_pfn(vma, addr, &pa) < 0) { 
+		printk("Unable to retrieve pfn for addr:%lx\n", addr);
+	}
+	return (pa << PAGE_SHIFT);
+}
+
 static int load_elf_binary(struct linux_binprm *bprm);
 static unsigned long elf_map(struct file *, unsigned long, struct elf_phdr *,
 				int, int, unsigned long);
@@ -566,6 +575,11 @@ static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
 
 			map_addr = elf_map(interpreter, load_addr + vaddr,
 					eppnt, elf_prot, elf_type, total_size);
+			if(current->mm->identity_mapping_en == 1) {
+			
+				printk("load-interp text map_addr:%lx\n", map_addr);
+				printk("load-interp total_size:%lx\n", total_size);
+			} 
 			total_size = 0;
 			if (!*interp_map_addr)
 				*interp_map_addr = map_addr;
@@ -925,14 +939,43 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			load_bias = ELF_PAGESTART(load_bias);
 			total_size = total_mapping_size(elf_phdata,
 							loc->elf_ex.e_phnum);
+			if(current->mm->identity_mapping_en == 1) {
+				printk("load_bias:%lx mapping_loc:%lx pf_randomize:%d\n", 
+					load_bias, load_bias + vaddr,
+					current->flags & PF_RANDOMIZE);
+			}
 			if (!total_size) {
 				retval = -EINVAL;
 				goto out_free_dentry;
 			}
 		}
-
-		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
+		// WHere text/code segment is mapped
+		if(current->mm->identity_mapping_en == 0)
+			error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
 				elf_prot, elf_flags, total_size);
+		else {
+			error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
+				elf_prot, elf_flags|MAP_POPULATE, total_size);
+			printk("load-bin BEFORE text map_addr VA:%lx PA:%lx\n", error, get_pa(error));
+			printk("load-bin BEFORE total_size:%lx\n", total_size);
+			if(total_size) {	
+				bool locked = false;
+				struct vm_area_struct *vma = find_vma(current->mm, error);
+				/* check if get_pa(error) is part of any existing vma */
+				/* Enable eager paging for code section = MAP_POPULATE */
+				struct vm_area_struct *new_vma = find_vma(current->mm, get_pa(error));
+				/* checks from get_unmapped_area(_topdown) copied */
+				if(get_pa(error) > TASK_SIZE - total_size) 
+					printk(".txt remap: Error 1: No space\n");
+				else if(new_vma && (error + total_size > new_vma->vm_start))	 
+					printk(".txt remap: Error 2: vma issues\n");
+					if(new_vma)
+						printk("Conflicting vma start:%lx\n", new_vma->vm_start);
+				else
+					error = move_vma(vma, error, total_size, total_size, get_pa(error), &locked);
+				printk("load-bin AFTER text map_addr VA:%lx PA:%lx\n", error, get_pa(error));
+			}
+		} 
 		if (BAD_ADDR(error)) {
 			retval = IS_ERR((void *)error) ?
 				PTR_ERR((void*)error) : -EINVAL;
@@ -1059,16 +1102,26 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 
 	if(current->mm->identity_mapping_en == 1) {
+	/* mmap_base gets populated here */
 	        arch_pick_mmap_layout(current->mm);
-//		current->mm->brk = current->mm->mmap_base;
 	}
 	/* Swapnil: where brk gets randomized */
 	if ((current->flags & PF_RANDOMIZE) && (randomize_va_space > 1)) {
+		if(current->mm->identity_mapping_en == 1)  {
+			current->mm->brk = current->mm->start_brk =
+				 current->mm->mmap_base;
+			printk("BEFORE start_brk:%lx brk:%lx\n", current->mm->start_brk,
+					current->mm->brk);
+		}		
 		current->mm->brk = current->mm->start_brk =
 			arch_randomize_brk(current->mm);
 #ifdef compat_brk_randomized
 		current->brk_randomized = 1;
 #endif
+		if(current->mm->identity_mapping_en == 1) {
+			printk("AFTER start_brk:%lx brk:%lx\n", current->mm->start_brk,
+					current->mm->brk);
+		}
 	}
 
 	if (current->personality & MMAP_PAGE_ZERO) {

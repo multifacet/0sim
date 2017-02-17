@@ -1396,6 +1396,9 @@ extern int mprotect_fixup(struct vm_area_struct *vma,
 			  struct vm_area_struct **pprev, unsigned long start,
 			  unsigned long end, unsigned long newflags);
 
+extern unsigned long move_vma(struct vm_area_struct *vma,
+		unsigned long old_addr, unsigned long old_len,
+		unsigned long new_len, unsigned long new_addr, bool *locked);
 /*
  * doesn't attempt to fault and will return short.
  */
