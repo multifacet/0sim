@@ -961,19 +961,21 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			if(total_size) {	
 				bool locked = false;
 				struct vm_area_struct *vma = find_vma(current->mm, error);
-				/* check if get_pa(error) is part of any existing vma */
+				unsigned long phys_addr = get_pa(error);
+				/* check if phys_addr is part of any existing vma */
 				/* Enable eager paging for code section = MAP_POPULATE */
-				struct vm_area_struct *new_vma = find_vma(current->mm, get_pa(error));
+				struct vm_area_struct *new_vma = find_vma(current->mm, phys_addr);
 				/* checks from get_unmapped_area(_topdown) copied */
-				if(get_pa(error) > TASK_SIZE - total_size) 
+				if(phys_addr > TASK_SIZE - total_size)
 					printk(".txt remap: Error 1: No space\n");
-				else if(new_vma && (error + total_size > new_vma->vm_start))	 
+				else if(new_vma && (phys_addr + total_size > new_vma->vm_start))	{
 					printk(".txt remap: Error 2: vma issues\n");
 					if(new_vma)
 						printk("Conflicting vma start:%lx\n", new_vma->vm_start);
+				}
 				else
-					error = move_vma(vma, error, total_size, total_size, get_pa(error), &locked);
-				printk("load-bin AFTER text map_addr VA:%lx PA:%lx\n", error, get_pa(error));
+					error = move_vma(vma, error, total_size, total_size, phys_addr, &locked);
+				printk("load-bin AFTER text map_addr VA:%lx PA:%lx\n", error, phys_addr);
 			}
 		} 
 		if (BAD_ADDR(error)) {
