@@ -299,10 +299,6 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 	unsigned long populate;
 	unsigned long apriori_flag;
 	
-	if(mm->identity_mapping_en == 1) 
-		printk("vm_mmap_pgoff addr:%lx len:%lx prot:%lx flag:%lx\n",
-			addr, len, prot, flag);
-
 	ret = security_mmap_file(file, prot, flag);
 	if (!ret) {
 		if (down_write_killable(&mm->mmap_sem))
@@ -316,6 +312,15 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 	return ret;
 }
 
+static unsigned long get_pa(unsigned long addr) {
+	unsigned long pa = 0;
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	if(follow_pfn(vma, addr, &pa) < 0) { 
+		printk("Unable to retrieve pfn for addr:%lx\n", addr);
+	}
+	return (pa << PAGE_SHIFT);
+}
+
 unsigned long vm_mmap(struct file *file, unsigned long addr,
 	unsigned long len, unsigned long prot,
 	unsigned long flag, unsigned long offset)
@@ -324,8 +329,38 @@ unsigned long vm_mmap(struct file *file, unsigned long addr,
 		return -EINVAL;
 	if (unlikely(offset_in_page(offset)))
 		return -EINVAL;
-
-	return vm_mmap_pgoff(file, addr, len, prot, flag, offset >> PAGE_SHIFT);
+	if(unlikely(current->mm->identity_mapping_en == 1)) {
+		/*
+		bool locked = false;
+		struct vm_area_struct *vma;
+		struct vm_area_struct *new_vma;
+		unsigned long phys_addr;
+		*/
+		printk("vm_mmap_pgoff addr:%lx len:%lx prot:%lx flag:%lx offset:%lx\n",
+			addr, len, prot, flag, offset);
+		addr = vm_mmap_pgoff(file, addr, len, prot, flag, offset >> PAGE_SHIFT);
+		/*phys_addr = get_pa(addr);
+		if(addr != phys_addr && (addr>0) && 0) { 
+			vma =  find_vma(current->mm, addr);
+			printk("BEFORE remap VA:%lx PA:%lx\n", addr, get_pa(addr));
+			// check if phys_addr is part of any existing vma 
+			new_vma = find_vma(current->mm, phys_addr);
+			// checks from get_unmapped_area(_topdown) copied 
+			if(phys_addr > TASK_SIZE - len)
+				printk("remap: Error 1: No space\n");
+			else if(new_vma && (phys_addr + len > new_vma->vm_start)) {
+				printk("remap: Error 2: vma issues\n");
+				if(new_vma)
+					printk("Conflicting vma start:%lx\n", new_vma->vm_start);
+			}
+			else
+				addr = move_vma(vma, addr, len, len, phys_addr, &locked);
+			printk("AFTER remap VA:%lx PA:%lx\n", addr, phys_addr);
+		}*/
+		return addr;
+	}	
+	else
+		return vm_mmap_pgoff(file, addr, len, prot, flag, offset >> PAGE_SHIFT);
 }
 EXPORT_SYMBOL(vm_mmap);
 
