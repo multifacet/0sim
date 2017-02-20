@@ -952,38 +952,12 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			}
 		}
 		// WHere text/code segment is mapped
-		if(current->mm->identity_mapping_en == 0)
-			error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
-				elf_prot, elf_flags, total_size);
-		else {
-			error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
-				elf_prot, elf_flags|MAP_POPULATE, total_size);
-			if(total_size > 0) {
-				base_addr = error;
-				base_size = total_size;
-			}
-/*			printk("load-bin BEFORE text map_addr VA:%lx PA:%lx\n", error, get_pa(error));
-			printk("load-bin BEFORE total_size:%lx\n", total_size);
-			if(total_size) {	
-				bool locked = false;
-				struct vm_area_struct *vma = find_vma(current->mm, error);
-				unsigned long phys_addr = get_pa(error);
-				// check if phys_addr is part of any existing vma 
-				// Enable eager paging for code section = MAP_POPULATE 
-				struct vm_area_struct *new_vma = find_vma(current->mm, phys_addr);
-				// checks from get_unmapped_area(_topdown) copied 
-				if(phys_addr > TASK_SIZE - total_size)
-					printk(".txt remap: Error 1: No space\n");
-				else if(new_vma && (phys_addr + total_size > new_vma->vm_start))	{
-					printk(".txt remap: Error 2: vma issues\n");
-					if(new_vma)
-						printk("Conflicting vma start:%lx\n", new_vma->vm_start);
-				}
-				else
-					error = move_vma(vma, error, total_size, total_size, phys_addr, &locked);
-				printk("load-bin AFTER text map_addr VA:%lx PA:%lx\n", error, phys_addr);
-			}*/
-		} 
+		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
+			elf_prot, elf_flags, total_size);
+		if(total_size > 0) {
+			base_addr = error;
+			base_size = total_size;
+		}
 		if (BAD_ADDR(error)) {
 			retval = IS_ERR((void *)error) ?
 				PTR_ERR((void*)error) : -EINVAL;
@@ -1034,16 +1008,19 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	/* SWAPNIL: After all the segments are mapped, we remap them to get VA == PA */
 	if(current->mm->identity_mapping_en == 1) {	
-		printk("load-bin BEFORE text map_addr VA:%lx PA:%lx\n", base_addr, get_pa(base_addr));
-		printk("load-bin BEFORE base_size:%lx\n", base_size);
 		bool locked = false;
 		struct vm_area_struct *vma = find_vma(current->mm, base_addr);
-		unsigned long phys_addr = get_pa(base_addr);
+		unsigned long phys_addr = 0 ;
 		// check if phys_addr is part of any existing vma 
 		// Enable eager paging for code section = MAP_POPULATE 
 		struct vm_area_struct *new_vma = find_vma(current->mm, phys_addr);
-		// Does this VMA include all mapped regions of elf?
-		printk("vma size:%lx base_size:%lx\n", vma->vm_end-vma->vm_start, base_size);
+		mm_populate(base_addr, PAGE_ALIGN(base_size), 2);
+		phys_addr = get_pa(base_addr);
+		printk("load-bin BEFORE text map_addr VA:%lx PA:%lx\n", base_addr, phys_addr);
+		printk("load-bin BEFORE text map_addr+size VA:%lx PA:%lx\n", base_addr+base_size-1, get_pa(base_addr+base_size-1));
+		printk("load-bin BEFORE base_size:%lx\n", base_size);
+		// Does this VMA include all mapped regions of elf? NO
+//		printk("vma size:%lx base_size:%lx\n", vma->vm_end-vma->vm_start, base_size);
 		// checks from get_unmapped_area(_topdown) copied 
 		if(phys_addr > TASK_SIZE - base_size)
 			printk(".txt remap: Error 1: No space\n");
@@ -1052,8 +1029,11 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			if(new_vma)
 				printk("Conflicting vma start:%lx\n", new_vma->vm_start);
 		}
-		else
-			base_addr = move_vma(vma, base_addr, base_size, base_size, phys_addr, &locked);
+		else {
+			unsigned long vm_size = vma->vm_end - vma->vm_start;
+			base_addr = move_vma(vma, base_addr, vm_size, vm_size, phys_addr, &locked);
+		}
+		phys_addr = get_pa(base_addr);
 		printk("load-bin AFTER text map_addr VA:%lx PA:%lx\n", base_addr, phys_addr);
 	}
 

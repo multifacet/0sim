@@ -4285,7 +4285,7 @@ void ptlock_free(struct page *page)
 #endif
 
 int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *vma,
-                                    unsigned long addr, unsigned int nr_pages, unsigned int flags)
+	unsigned long addr, unsigned int nr_pages, unsigned int flags)
 {
     int i;
     pgd_t *pgd;
@@ -4408,8 +4408,9 @@ int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *v
         __SetPageUptodate(new_page);
 
         ptep = pte_offset_map_lock(mm, pmd, new_addr, &ptl);
-
-	init_page_count(new_page);	
+	vmf.pte = ptep;
+//	init_page_count(new_page);	
+	atomic_set(&new_page->_refcount, 1);
 
 //        if (unlikely(!pte_same(*ptep, orig_pte))) {
 //            pte_unmap_unlock(ptep, ptl);
@@ -4497,6 +4498,7 @@ int fill_page_table_manually(struct mm_struct *mm , struct vm_area_struct *vma, 
 
     ptep = pte_offset_map_lock(mm,pmd,addr,&ptl);
     pte = *ptep;
+    /* Gets the page struct of the physical page */
     pg = pte_page(pte);
     __SetPageUptodate(pg);
     pte_unmap_unlock(ptep,ptl);
