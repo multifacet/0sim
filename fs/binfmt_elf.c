@@ -874,6 +874,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 	/* Do this so that we can load the interpreter, if need be.  We will
 	   change some of these later */
+	/* Too early to do anything, as the start_code hasn't been set */
 	retval = setup_arg_pages(bprm, randomize_stack_top(STACK_TOP),
 				 executable_stack);
 	if (retval < 0)
@@ -1014,10 +1015,11 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		// check if phys_addr is part of any existing vma 
 		// Enable eager paging for code section = MAP_POPULATE 
 		struct vm_area_struct *new_vma = find_vma(current->mm, phys_addr);
-		mm_populate(base_addr, PAGE_ALIGN(base_size), 2);
+		unsigned long vm_size = vma->vm_end - vma->vm_start;
+		mm_populate(base_addr, PAGE_ALIGN(base_size), 0);
 		phys_addr = get_pa(base_addr);
 		printk("load-bin BEFORE text map_addr VA:%lx PA:%lx\n", base_addr, phys_addr);
-		printk("load-bin BEFORE text map_addr+size VA:%lx PA:%lx\n", base_addr+base_size-1, get_pa(base_addr+base_size-1));
+		printk("load-bin BEFORE text map_addr+size VA:%lx PA:%lx\n", base_addr+vm_size, get_pa(base_addr+vm_size));
 		printk("load-bin BEFORE base_size:%lx\n", base_size);
 		// Does this VMA include all mapped regions of elf? NO
 //		printk("vma size:%lx base_size:%lx\n", vma->vm_end-vma->vm_start, base_size);
@@ -1030,11 +1032,13 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				printk("Conflicting vma start:%lx\n", new_vma->vm_start);
 		}
 		else {
-			unsigned long vm_size = vma->vm_end - vma->vm_start;
-			base_addr = move_vma(vma, base_addr, vm_size, vm_size, phys_addr, &locked);
+		//	base_addr = move_vma(vma, base_addr, vm_size, vm_size, phys_addr, &locked);
+			//NEXT SEGMENT - do FOR LOOP
+		//	vma = find_vma(current->mm, base_addr+vm_size);
+		//	base_addr = move_vma(vma, base_addr+vm_size, PAGE_ALIGN(base_size-vm_size), PAGE_ALIGN(base_size-vm_size), phys_addr+vm_size, &locked);
 		}
-		phys_addr = get_pa(base_addr);
-		printk("load-bin AFTER text map_addr VA:%lx PA:%lx\n", base_addr, phys_addr);
+		printk("load-bin AFTER text map_addr VA:%lx PA:%lx\n", base_addr, get_pa(base_addr));
+		printk("load-bin AFTER text map_addr+size VA:%lx PA:%lx\n", base_addr+base_size-1, get_pa(base_addr+base_size-1));
 	}
 
 

@@ -267,6 +267,7 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 	struct vm_area_struct *vma = NULL;
 	struct mm_struct *mm = bprm->mm;
 
+	/* Temporary stack is allocated here */
 	bprm->vma = vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
 	if (!vma)
 		return -ENOMEM;
@@ -653,6 +654,16 @@ static int shift_arg_pages(struct vm_area_struct *vma, unsigned long shift)
 	return 0;
 }
 
+static unsigned long get_pa(unsigned long addr) {
+	unsigned long pa = 0;
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	if(follow_pfn(vma, addr, &pa) < 0) { 
+		printk("Unable to retrieve pfn for addr:%lx\n", addr);
+	}
+	return (pa << PAGE_SHIFT);
+}
+
+
 /*
  * Finalizes the stack vm_area_struct. The flags and permissions are updated,
  * the stack is optionally relocated, and some extra space is added.
@@ -671,7 +682,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	unsigned long stack_size;
 	unsigned long stack_expand;
 	unsigned long rlim_stack;
-
+	/* Swapnil: Considering STACK grows down */
 #ifdef CONFIG_STACK_GROWSUP
 	/* Limit stack size */
 	stack_base = rlimit_max(RLIMIT_STACK);
@@ -694,8 +705,9 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	stack_top = arch_align_stack(stack_top);
 	stack_top = PAGE_ALIGN(stack_top);
 
-	if (unlikely(stack_top < mmap_min_addr) ||
-	    unlikely(vma->vm_end - vma->vm_start >= stack_top - mmap_min_addr))
+	if ((unlikely(stack_top < mmap_min_addr) ||
+	    unlikely(vma->vm_end - vma->vm_start >= stack_top - mmap_min_addr)
+		) && unlikely(mm->identity_mapping_en == 1))
 		return -ENOMEM;
 
 	stack_shift = vma->vm_end - stack_top;
@@ -741,7 +753,10 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	/* mprotect_fixup is overkill to remove the temporary stack flags */
 	vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
 
-	stack_expand = 131072UL; /* randomly 32*4k (or 2*64k) pages */
+	if(unlikely(mm->identity_mapping_en == 1)) 
+		stack_expand = 8388608UL; /* Max possible = 8MB */
+	else
+		stack_expand = 131072UL; /* randomly 32*4k (or 2*64k) pages */
 	stack_size = vma->vm_end - vma->vm_start;
 	/*
 	 * Align this down to a page boundary as expand_stack
@@ -759,11 +774,45 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	else
 		stack_base = vma->vm_start - stack_expand;
 #endif
+	/*SWAPNIL: WTF is this ??*/
 	current->mm->start_stack = bprm->p;
 	ret = expand_stack(vma, stack_base);
+	
 	if (ret)
 		ret = -EFAULT;
-
+	if(unlikely(mm->identity_mapping_en == 1)) {
+		unsigned long phys_addr = 0;
+		struct vm_area_struct *new_vma;
+		bool locked = false;
+		int pop = 0;
+		stack_size = vma->vm_end - vma->vm_start;
+		printk("start_stack:%lx vma->vm_star:%lx\n", current->mm->start_stack, vma->vm_start);
+		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
+		up_write(&mm->mmap_sem);
+		pop = __mm_populate(vma->vm_start, stack_size, 0, 0);
+		printk("pop:%d\n", pop);
+		printk("AFTER stack populate VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+		printk("AFTER stack populate VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
+		phys_addr = get_pa(vma->vm_start);
+		new_vma = find_vma(current->mm, phys_addr);
+		if (down_write_killable(&mm->mmap_sem))
+			return -EINTR;
+		if(phys_addr > TASK_SIZE - stack_size)
+			printk(".txt remap: Error 1: No space\n");
+		else if(new_vma && (phys_addr + stack_size > new_vma->vm_start)){
+			printk(".txt remap: Error 2: vma issues\n");
+			if(new_vma)
+				printk("Conflicting vma start:%lx\n", new_vma->vm_start);
+		}
+		else if(get_pa(vma->vm_start!=0)){
+			move_vma(vma, vma->vm_start, stack_size, stack_size, phys_addr, &locked);
+			//current->mm->start_stack = vma->vm_start;
+			printk("AFTER stack remap VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+			printk("AFTER stack remap VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
+			//NEXT SEGMENT - do FOR LOOP
+		}
+	}
 out_unlock:
 	up_write(&mm->mmap_sem);
 	return ret;
