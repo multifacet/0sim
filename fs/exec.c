@@ -67,7 +67,8 @@
 
 #include <trace/events/sched.h>
 
-extern int is_process_of_identity_mapping(const char* proc_name);
+extern int is_process_of_identity_mapping_testing(const char* proc_name);
+extern int is_process_of_identity_mapping_stable(const char* proc_name);
 extern int is_process_of_apriori_paging(const char* proc_name);
 
 int suid_dumpable = 0;
@@ -682,6 +683,61 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	unsigned long stack_size;
 	unsigned long stack_expand;
 	unsigned long rlim_stack;
+
+	if(unlikely(mm->identity_mapping_en >= 1)) {
+		unsigned long phys_addr = 0;
+		struct vm_area_struct *old_vma;
+		struct vm_area_struct *new_vma;
+		struct vm_area_struct *prev_ver;
+		bool locked = false;
+		unsigned long new_size = 8388608UL;
+		unsigned long new_base = vm_mmap(NULL, 0, new_size, 
+			PROT_READ|PROT_WRITE,
+		 	MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_POPULATE, 0);
+		
+		stack_top = new_base + new_size - 4096; //Leaving space at the end
+		stack_size = vma->vm_end - vma->vm_start;
+		printk("BEFORE stack remap base VA:%lx PA:%lx\n", new_base, get_pa(new_base));
+		printk("BEFORE stack remap top VA:%lx PA:%lx\n", stack_top, get_pa(stack_top));
+		phys_addr = get_pa(new_base);
+		new_vma = find_vma(mm, phys_addr);
+		old_vma = find_vma(mm, new_base);
+
+		vm_flags = VM_STACK_FLAGS;
+
+		/*
+		 * Adjust stack execute permissions; explicitly enable for
+		 * EXSTACK_ENABLE_X, disable for EXSTACK_DISABLE_X and leave alone
+		 * (arch default) otherwise.
+		 */
+		if (unlikely(executable_stack == EXSTACK_ENABLE_X))
+			vm_flags |= VM_EXEC;
+		else if (executable_stack == EXSTACK_DISABLE_X)
+			vm_flags &= ~VM_EXEC;
+		vm_flags |= mm->def_flags;
+		vm_flags |= VM_STACK_INCOMPLETE_SETUP;
+
+		ret = mprotect_fixup(old_vma, &prev_ver, old_vma->vm_start, old_vma->vm_end,
+				vm_flags);
+		if (ret) {
+			printk("mprotect_fixup FAILED\n");
+			return -ENOMEM;
+		}
+
+		if(phys_addr > TASK_SIZE - new_size)
+			printk(".txt remap: Error 1: No space\n");
+		else if(new_vma && (phys_addr + new_size > new_vma->vm_start)){
+			printk(".txt remap: Error 2: vma issues\n");
+			if(new_vma)
+				printk("Conflicting vma start:%lx\n", new_vma->vm_start);
+		}
+		else if(get_pa(old_vma->vm_start)!=0 && mm->identity_mapping_en >= 2){
+			move_vma(old_vma, old_vma->vm_start, new_size, new_size, phys_addr, &locked);
+			printk("AFTER stack remap base VA:%lx PA:%lx\n", new_base, get_pa(new_base));
+			printk("AFTER stack remap top VA:%lx PA:%lx\n", stack_top, get_pa(stack_top));
+		}
+		printk("stack vm->end:%lx stack_top:%lx\n", old_vma->vm_end, stack_top);
+	}
 	/* Swapnil: Considering STACK grows down */
 #ifdef CONFIG_STACK_GROWSUP
 	/* Limit stack size */
@@ -704,6 +760,12 @@ int setup_arg_pages(struct linux_binprm *bprm,
 #else
 	stack_top = arch_align_stack(stack_top);
 	stack_top = PAGE_ALIGN(stack_top);
+
+	if(unlikely(mm->identity_mapping_en >= 1)) {
+		printk("Updated stack_top:%lx\n", stack_top);
+		printk("Original arg_start:%lx vma->vm_start:%lx vma->vm_end:%lx\n", 
+			bprm->p, vma->vm_start, vma->vm_end);
+	}
 
 	if ((unlikely(stack_top < mmap_min_addr) ||
 	    unlikely(vma->vm_end - vma->vm_start >= stack_top - mmap_min_addr)
@@ -744,17 +806,29 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	BUG_ON(prev != vma);
 
 	/* Move stack pages down in memory. */
-	if (stack_shift) {
+	if (stack_shift && mm->identity_mapping_en == 0) {
 		ret = shift_arg_pages(vma, stack_shift);
 		if (ret)
 			goto out_unlock;
+		/* mprotect_fixup is overkill to remove the temporary stack flags */
+		vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
+	}
+	else if(mm->identity_mapping_end >=2) { /* Swapnil -> need to copy over pages from vma to old_vma too */
+		printk("bprm->p:%lx bprm->exec:%lx bprm->loader:%lx\n", bprm->p, bprm->exec, bprm->loader);
+		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+		unsigned long copy_size = vma->vm_end - vma->vm_start;
+		unsigned long dest_start = stack_top - copy_size; 
+		printk("Trying to move stack\n");
+		printk("dest_start:%lx copy_size:%lx\n", copy_size);
+		if (copy_size != move_page_tables(vma, vma->vm_start, old_vma,
+						dest_start, copy_size, false))
+			return -ENOMEM;
+		printk("Succeeded in copying stack\n");
 	}
 
-	/* mprotect_fixup is overkill to remove the temporary stack flags */
-	vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
 
-	if(unlikely(mm->identity_mapping_en == 1)) 
-		stack_expand = 8388608UL; /* Max possible = 8MB */
+	if(unlikely(mm->identity_mapping_en >= 1)) 
+		stack_expand = 0; /* We already allocate max possible = 8MB */
 	else
 		stack_expand = 131072UL; /* randomly 32*4k (or 2*64k) pages */
 	stack_size = vma->vm_end - vma->vm_start;
@@ -780,21 +854,22 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	
 	if (ret)
 		ret = -EFAULT;
-	if(unlikely(mm->identity_mapping_en == 1)) {
-		unsigned long phys_addr = 0;
+	if(unlikely(mm->identity_mapping_en >= 1)) {
+/*		unsigned long phys_addr = 0;
 		struct vm_area_struct *new_vma;
 		bool locked = false;
 		int pop = 0;
 		stack_size = vma->vm_end - vma->vm_start;
-		printk("start_stack:%lx vma->vm_star:%lx\n", current->mm->start_stack, vma->vm_start);
-		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+		printk("start_stack:%lx vma->vm_start:%lx\n", current->mm->start_stack, vma->vm_start);
+		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_start+4096, get_pa(vma->vm_start+4096));
 		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
 		up_write(&mm->mmap_sem);
 		pop = __mm_populate(vma->vm_start, stack_size, 0, 0);
 		printk("pop:%d\n", pop);
 		printk("AFTER stack populate VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+		printk("AFTER stack populate VA:%lx PA:%lx\n", vma->vm_start+4096, get_pa(vma->vm_start+4096));
 		printk("AFTER stack populate VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
-		phys_addr = get_pa(vma->vm_start);
+		phys_addr = get_pa(vma->vm_start+1);
 		new_vma = find_vma(current->mm, phys_addr);
 		if (down_write_killable(&mm->mmap_sem))
 			return -EINTR;
@@ -805,13 +880,14 @@ int setup_arg_pages(struct linux_binprm *bprm,
 			if(new_vma)
 				printk("Conflicting vma start:%lx\n", new_vma->vm_start);
 		}
-		else if(get_pa(vma->vm_start!=0)){
-			move_vma(vma, vma->vm_start, stack_size, stack_size, phys_addr, &locked);
+		else if(get_pa(vma->vm_start+4096)!=0 && mm->identity_mapping_en >= 2){
+			move_vma(vma, vma->vm_start+4096, stack_size-4096, stack_size-4096, phys_addr, &locked);
 			//current->mm->start_stack = vma->vm_start;
 			printk("AFTER stack remap VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+			printk("AFTER stack remap VA:%lx PA:%lx\n", vma->vm_start+4096, get_pa(vma->vm_start+4096));
 			printk("AFTER stack remap VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
 			//NEXT SEGMENT - do FOR LOOP
-		}
+		}*/
 	}
 out_unlock:
 	up_write(&mm->mmap_sem);
@@ -1383,20 +1459,23 @@ void setup_new_exec(struct linux_binprm * bprm)
         }
         /* SWAPNIL: Check if we need to enable identity_mapping for this process*/
         current->mm->identity_mapping_en = 0;
-        if(is_process_of_identity_mapping(current->comm))
+        if(is_process_of_identity_mapping_stable(current->comm))
         {
                 current->mm->identity_mapping_en = 1;
 		printk("identity_mapping enabled for proc:%s\n", current->comm);
 		//arch_pick_mmap_layout(current->mm);
         }
-
+        else if(is_process_of_identity_mapping_testing(current->comm))
+        {
+                current->mm->identity_mapping_en = 2;
+		printk("identity_mapping enabled for proc:%s\n", current->comm);
+	}
         if(current && current->real_parent && current->real_parent != current && current->real_parent->mm && current->real_parent->mm->identity_mapping_en)
         {
                 current->mm->identity_mapping_en = 1;
 		printk("Discard after testing: identity_mapping enabled for child or thread\n");
 		//arch_pick_mmap_layout(current->mm);
         }
-
 
 	/* Set the new mm task size. We have to do that late because it may
 	 * depend on TIF_32BIT which is only updated in flush_thread() on

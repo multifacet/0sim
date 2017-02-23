@@ -27,14 +27,24 @@ SYSCALL_DEFINE3(init_identity_map, const char __user**, proc_name, unsigned int,
     unsigned long pid;
 
 
-    if ( option > 0 ) {
+    if ( option == 1 ) {
 	start_tracking = 1;
         for ( i = 0 ; i < CONFIG_NR_CPUS ; i++ ) {
             if ( i < num_procs )
                 ret = strncpy_from_user(proc, proc_name[i], MAX_PROC_NAME_LEN);
             else
                 temp = strncpy(proc,"",MAX_PROC_NAME_LEN);
-            temp = strncpy(identity_mapping_process[i], proc, MAX_PROC_NAME_LEN-1);
+            temp = strncpy(identity_mapping_process_stable[i], proc, MAX_PROC_NAME_LEN-1);
+        }
+    }
+    else if ( option > 1 ) {
+	    start_tracking = 1;
+	    for ( i = 0 ; i < CONFIG_NR_CPUS ; i++ ) {
+            if ( i < num_procs )
+                ret = strncpy_from_user(proc, proc_name[i], MAX_PROC_NAME_LEN);
+            else
+                temp = strncpy(proc,"",MAX_PROC_NAME_LEN);
+            temp = strncpy(identity_mapping_process_testing[i], proc, MAX_PROC_NAME_LEN-1);
         }
     }
 
@@ -60,7 +70,7 @@ SYSCALL_DEFINE3(init_identity_map, const char __user**, proc_name, unsigned int,
  *
  */
 
-int is_process_of_identity_mapping(const char* proc_name)
+int is_process_of_identity_mapping_stable(const char* proc_name)
 {
 
     unsigned int i;
@@ -69,7 +79,23 @@ int is_process_of_identity_mapping(const char* proc_name)
 	return 0;
 
     for ( i = 0 ; i < CONFIG_NR_CPUS ; i++ )     {
-        if (!strncmp(proc_name,identity_mapping_process[i],MAX_PROC_NAME_LEN))
+        if (!strncmp(proc_name,identity_mapping_process_stable[i],MAX_PROC_NAME_LEN))
+            return 1;
+    }
+
+    return 0;
+}
+
+int is_process_of_identity_mapping_testing(const char* proc_name)
+{
+
+    unsigned int i;
+	
+    if (start_tracking == 0)
+	return 0;
+
+    for ( i = 0 ; i < CONFIG_NR_CPUS ; i++ )     {
+        if (!strncmp(proc_name,identity_mapping_process_testing[i],MAX_PROC_NAME_LEN))
             return 1;
     }
 

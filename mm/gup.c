@@ -572,6 +572,9 @@ static long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 
 	VM_BUG_ON(!!pages != !!(gup_flags & FOLL_GET));
 
+	if(mm->identity_mapping_en == 1) {
+		printk("i:%lu, start:%lx len:%lu\n", i, start, nr_pages);
+	}
 	/*
 	 * If FOLL_FORCE is set then do not force a full fault as the hinting
 	 * fault information is unrelated to the reference behaviour of a task
@@ -701,19 +704,15 @@ next_page:
 			vmas[i] = vma;
 			page_mask = 0;
 		}
-		page_increm = 1 + (~(start >> PAGE_SHIFT) & page_mask);
-		if (page_increm > nr_pages)
-			page_increm = nr_pages;
-		i += page_increm;
-            /*
-             *  !!_AprioriPaging_!!
-             *  In this control statement we check if our order works
-             *  then we set page_increm with the number of new order
-             *
-             *  page_increm variables effects how many times loop will
-             *  work by changing the virtual adresses of pages
-             *
-             */
+		/*
+		 *  !!_AprioriPaging_!!
+		 *  In this control statement we check if our order works
+		 *  then we set page_increm with the number of new order
+		 *
+		 *  page_increm variables effects how many times loop will
+		 *  work by changing the virtual adresses of pages
+		 *
+		 */
 		if ((apriori_flag == 1) || (apriori_flag == 2))
 			page_increm = (unsigned int)(1 << (apriori_order));
 		else
@@ -738,6 +737,9 @@ next_page:
 		start += page_increm * PAGE_SIZE;
 		nr_pages -= page_increm;
 	} while (nr_pages);
+	if(mm->identity_mapping_en == 1) {
+		printk("i:%lu, start:%lx len:%lu\n", i, start, nr_pages);
+	}
 	return i;
 }
 

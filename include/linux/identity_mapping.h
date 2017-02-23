@@ -3,7 +3,8 @@
 
 #define MAX_PROC_NAME_LEN 16
 
-char identity_mapping_process[CONFIG_NR_CPUS][MAX_PROC_NAME_LEN];
+char identity_mapping_process_testing[CONFIG_NR_CPUS][MAX_PROC_NAME_LEN];
+char identity_mapping_process_stable[CONFIG_NR_CPUS][MAX_PROC_NAME_LEN];
 int start_tracking = 0;
 int is_process_of_identity_mapping(const char* proc_name);
 
