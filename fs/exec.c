@@ -684,11 +684,11 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	unsigned long stack_size;
 	unsigned long stack_expand;
 	unsigned long rlim_stack;
-	struct vm_area_struct *old_vma;
+	struct vm_area_struct *new_vma;
 
 	if(unlikely(mm->identity_mapping_en >= 1)) {
 		unsigned long phys_addr = 0;
-		struct vm_area_struct *new_vma;
+		struct vm_area_struct *phys_vma;
 //		struct vm_area_struct *prev_ver = NULL;
 		bool locked = false;
 		unsigned long new_size = 8388608UL;
@@ -720,12 +720,12 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		printk("BEFORE stack remap base VA:%lx PA:%lx\n", new_base, get_pa(new_base));
 		printk("BEFORE stack remap top VA:%lx PA:%lx\n", stack_top, get_pa(stack_top));
 		phys_addr = get_pa(new_base);
-		new_vma = find_vma(mm, phys_addr);
-		old_vma = find_vma(mm, new_base);
-//		ret = mprotect_fixup(old_vma, &prev_ver, old_vma->vm_start, old_vma->vm_end,
+		phys_vma = find_vma(mm, phys_addr);
+		new_vma = find_vma(mm, new_base);
+//		ret = mprotect_fixup(new_vma, &prev_ver, new_vma->vm_start, new_vma->vm_end,
 //				vm_flags);
-		printk("BEFORE stack remap old->vm_start VA:%lx PA:%lx\n", old_vma->vm_start, get_pa(old_vma->vm_start));
-		printk("BEFORE stack remap old->vm_end VA:%lx PA:%lx\n", old_vma->vm_end-4096, get_pa(old_vma->vm_end-4096));
+		printk("BEFORE stack remap old->vm_start VA:%lx PA:%lx\n", new_vma->vm_start, get_pa(new_vma->vm_start));
+		printk("BEFORE stack remap old->vm_end VA:%lx PA:%lx\n", new_vma->vm_end-4096, get_pa(new_vma->vm_end-4096));
 		if (ret) {
 			printk("mprotect_fixup FAILED\n");
 			return -ENOMEM;
@@ -733,19 +733,20 @@ int setup_arg_pages(struct linux_binprm *bprm,
 
 		if(phys_addr > TASK_SIZE - new_size)
 			printk(".txt remap: Error 1: No space\n");
-		else if(new_vma && (phys_addr + new_size > new_vma->vm_start)){
+		else if(phys_vma && (phys_addr + new_size > phys_vma->vm_start)){
 			printk(".txt remap: Error 2: vma issues\n");
-			if(new_vma)
-				printk("Conflicting vma start:%lx\n", new_vma->vm_start);
+			if(phys_vma)
+				printk("Conflicting vma start:%lx\n", phys_vma->vm_start);
 		}
-		else if(get_pa(old_vma->vm_start)!=0 && mm->identity_mapping_en >= 2){
-			unsigned long temp_base = move_vma(old_vma, old_vma->vm_start, PAGE_ALIGN(new_size), PAGE_ALIGN(new_size), phys_addr, &locked);
-			printk("AFTER stack base:%lx\n", temp_base);
-			old_vma = find_vma(mm, temp_base);
-			printk("AFTER stack remap old->vm_start VA:%lx PA:%lx\n", old_vma->vm_start, get_pa(old_vma->vm_start));
-			printk("AFTER stack remap old->vm_end VA:%lx PA:%lx\n", old_vma->vm_end-4096, get_pa(old_vma->vm_end-4096));
+		else if(get_pa(new_vma->vm_start)!=0 && mm->identity_mapping_en >= 2){
+			unsigned long temp_base = move_vma(new_vma, new_vma->vm_start, PAGE_ALIGN(new_size), PAGE_ALIGN(new_size), phys_addr, &locked);
+			stack_top = temp_base + new_size - 4096; //Leaving space at the end
+			printk("AFTER stack_base:%lx stack_top:%lx\n", temp_base, stack_top);
+			new_vma = find_vma(mm, temp_base);
+			printk("AFTER stack remap old->vm_start VA:%lx PA:%lx\n", new_vma->vm_start, get_pa(new_vma->vm_start));
+			printk("AFTER stack remap old->vm_end VA:%lx PA:%lx\n", new_vma->vm_end-4096, get_pa(new_vma->vm_end-4096));
 		}
-		printk("stack vm->end:%lx stack_top:%lx\n", old_vma->vm_end, stack_top);
+		printk("stack vm->end:%lx stack_top:%lx\n", new_vma->vm_end, stack_top);
 	}
 	/* Swapnil: Considering STACK grows down */
 #ifdef CONFIG_STACK_GROWSUP
@@ -823,22 +824,56 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		/* mprotect_fixup is overkill to remove the temporary stack flags */
 		vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
 	}
-	else if(mm->identity_mapping_en >=2) { /* Swapnil -> need to copy over pages from vma to old_vma too */
+	else if(mm->identity_mapping_en >=2) { /* Swapnil -> need to copy over pages from vma to new_vma too */
 		unsigned long copy_size = vma->vm_end - vma->vm_start;
 		unsigned long dest_start = stack_top - copy_size; 
+		unsigned long old_start = vma->vm_start;
+		unsigned long old_end = vma->vm_end;
+		struct mmu_gather tlb;
 		printk("Trying to move stack\n");
 		printk("dest_start:%lx copy_size:%lx\n", dest_start, copy_size);
-		if (copy_size != move_page_tables(vma, vma->vm_start, old_vma,
+		if (copy_size != move_page_tables(vma, old_start, new_vma,
 						dest_start, copy_size, false))
 			return -ENOMEM;
-		printk("AFTER stack remap old->vm_start VA:%lx PA:%lx\n", old_vma->vm_start, get_pa(old_vma->vm_start));
-		printk("AFTER stack remap old->vm_end VA:%lx PA:%lx\n", old_vma->vm_end-4096, get_pa(old_vma->vm_end-4096));
+
+		lru_add_drain();
+		tlb_gather_mmu(&tlb, mm, old_start, old_end);
+		
+		if (stack_top > old_start) {
+			/*
+			 * when the old and new regions overlap clear from new_end.
+			 */
+//			free_pgd_range(&tlb, stack_top, old_end, stack_top,
+//					new_vma->vm_next ? new_vma->vm_next->vm_start : US);
+			return -ENOMEM; // Handle this better
+		} else {
+			/*
+			 * otherwise, clean from old_start; this is done to not touch
+			 * the address space in [new_end, old_start) some architectures
+		 * have constraints on va-space that make this illegal (IA64) -
+		 * for the others its just a little faster.
+		 */
+			printk("Making sure we are cleaning the right place:%lx\n", vma->vm_start);
+			free_pgd_range(&tlb, old_start, old_end, dest_start,
+					USER_PGTABLES_CEILING);
+			tlb_finish_mmu(&tlb, old_start, old_end);
+		}
+		printk("AFTER stack copy old->vm_start VA:%lx PA:%lx\n", new_vma->vm_start, get_pa(new_vma->vm_start));
+		printk("AFTER stack copy old->vm_end VA:%lx PA:%lx\n", new_vma->vm_end-4096, get_pa(new_vma->vm_end-4096));
 		printk("Succeeded in copying stack\n");
+		printk("bprm->p:%lx bprm->exec:%lx bprm->loader:%lx\n", bprm->p, bprm->exec, bprm->loader);
+	}
+	else if(mm->identity_mapping_en >=1) { /* Swapnil -> need to copy over pages from vma to new_vma too */
+		//unsigned long copy_size = vma->vm_end - vma->vm_start;
+		//unsigned long dest_start = stack_top - copy_size; 
+//		memcpy(dest_start, )
+		/* How does one go about copying USERSPACE data in KERNELSPACE?? */
 	}
 
-
-	if(unlikely(mm->identity_mapping_en >= 1)) 
+	if(unlikely(mm->identity_mapping_en >= 1)) {
 		stack_expand = 0; /* We already allocate max possible = 8MB */
+		stack_base = new_vma->vm_start;
+	}
 	else
 		stack_expand = 131072UL; /* randomly 32*4k (or 2*64k) pages */
 	stack_size = vma->vm_end - vma->vm_start;
@@ -853,52 +888,21 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	else
 		stack_base = vma->vm_end + stack_expand;
 #else
-	if (stack_size + stack_expand > rlim_stack)
-		stack_base = vma->vm_end - rlim_stack;
-	else
-		stack_base = vma->vm_start - stack_expand;
+	if(mm->identity_mapping_en <1) {
+		if (stack_size + stack_expand > rlim_stack)
+			stack_base = vma->vm_end - rlim_stack;
+		else
+			stack_base = vma->vm_start - stack_expand; 
+	}
 #endif
 	/*SWAPNIL: WTF is this ??*/
 	current->mm->start_stack = bprm->p;
-	ret = expand_stack(vma, stack_base);
+	if(mm->identity_mapping_en <1) {
+		ret = expand_stack(vma, stack_base);
+	}
 	
 	if (ret)
 		ret = -EFAULT;
-	if(unlikely(mm->identity_mapping_en >= 1)) {
-/*		unsigned long phys_addr = 0;
-		struct vm_area_struct *new_vma;
-		bool locked = false;
-		int pop = 0;
-		stack_size = vma->vm_end - vma->vm_start;
-		printk("start_stack:%lx vma->vm_start:%lx\n", current->mm->start_stack, vma->vm_start);
-		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_start+4096, get_pa(vma->vm_start+4096));
-		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
-		up_write(&mm->mmap_sem);
-		pop = __mm_populate(vma->vm_start, stack_size, 0, 0);
-		printk("pop:%d\n", pop);
-		printk("AFTER stack populate VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
-		printk("AFTER stack populate VA:%lx PA:%lx\n", vma->vm_start+4096, get_pa(vma->vm_start+4096));
-		printk("AFTER stack populate VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
-		phys_addr = get_pa(vma->vm_start+1);
-		new_vma = find_vma(current->mm, phys_addr);
-		if (down_write_killable(&mm->mmap_sem))
-			return -EINTR;
-		if(phys_addr > TASK_SIZE - stack_size)
-			printk(".txt remap: Error 1: No space\n");
-		else if(new_vma && (phys_addr + stack_size > new_vma->vm_start)){
-			printk(".txt remap: Error 2: vma issues\n");
-			if(new_vma)
-				printk("Conflicting vma start:%lx\n", new_vma->vm_start);
-		}
-		else if(get_pa(vma->vm_start+4096)!=0 && mm->identity_mapping_en >= 2){
-			move_vma(vma, vma->vm_start+4096, stack_size-4096, stack_size-4096, phys_addr, &locked);
-			//current->mm->start_stack = vma->vm_start;
-			printk("AFTER stack remap VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
-			printk("AFTER stack remap VA:%lx PA:%lx\n", vma->vm_start+4096, get_pa(vma->vm_start+4096));
-			printk("AFTER stack remap VA:%lx PA:%lx\n", vma->vm_end-1, get_pa(vma->vm_end-1));
-			//NEXT SEGMENT - do FOR LOOP
-		}*/
-	}
 out_unlock:
 	up_write(&mm->mmap_sem);
 	return ret;
