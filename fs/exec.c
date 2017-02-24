@@ -66,6 +66,7 @@
 #include "internal.h"
 
 #include <trace/events/sched.h>
+#include <linux/mman.h>
 
 extern int is_process_of_identity_mapping_testing(const char* proc_name);
 extern int is_process_of_identity_mapping_stable(const char* proc_name);
@@ -683,17 +684,36 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	unsigned long stack_size;
 	unsigned long stack_expand;
 	unsigned long rlim_stack;
+	struct vm_area_struct *old_vma;
 
 	if(unlikely(mm->identity_mapping_en >= 1)) {
 		unsigned long phys_addr = 0;
-		struct vm_area_struct *old_vma;
 		struct vm_area_struct *new_vma;
-		struct vm_area_struct *prev_ver;
+//		struct vm_area_struct *prev_ver = NULL;
 		bool locked = false;
 		unsigned long new_size = 8388608UL;
-		unsigned long new_base = vm_mmap(NULL, 0, new_size, 
-			PROT_READ|PROT_WRITE,
-		 	MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_POPULATE, 0);
+		unsigned long new_base;
+		unsigned long prot_flags;
+		unsigned long map_flags;
+
+//		vm_flags = VM_STACK_FLAGS;
+		prot_flags = PROT_GROWSDOWN;
+		prot_flags |= PROT_READ|PROT_WRITE|PROT_EXEC;
+		map_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK | MAP_POPULATE;
+		/*
+		 * Adjust stack execute permissions; explicitly enable for
+		 * EXSTACK_ENABLE_X, disable for EXSTACK_DISABLE_X and leave alone
+		 * (arch default) otherwise.
+		 */
+		if (unlikely(executable_stack == EXSTACK_ENABLE_X))
+			prot_flags |= PROT_EXEC;
+		else if (executable_stack == EXSTACK_DISABLE_X)
+			prot_flags &= ~PROT_EXEC;
+//		vm_flags |= mm->def_flags;
+//		vm_flags |= VM_STACK_INCOMPLETE_SETUP;
+
+
+		new_base = vm_mmap(NULL, 0, new_size, prot_flags, map_flags, 0);
 		
 		stack_top = new_base + new_size - 4096; //Leaving space at the end
 		stack_size = vma->vm_end - vma->vm_start;
@@ -702,23 +722,10 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		phys_addr = get_pa(new_base);
 		new_vma = find_vma(mm, phys_addr);
 		old_vma = find_vma(mm, new_base);
-
-		vm_flags = VM_STACK_FLAGS;
-
-		/*
-		 * Adjust stack execute permissions; explicitly enable for
-		 * EXSTACK_ENABLE_X, disable for EXSTACK_DISABLE_X and leave alone
-		 * (arch default) otherwise.
-		 */
-		if (unlikely(executable_stack == EXSTACK_ENABLE_X))
-			vm_flags |= VM_EXEC;
-		else if (executable_stack == EXSTACK_DISABLE_X)
-			vm_flags &= ~VM_EXEC;
-		vm_flags |= mm->def_flags;
-		vm_flags |= VM_STACK_INCOMPLETE_SETUP;
-
-		ret = mprotect_fixup(old_vma, &prev_ver, old_vma->vm_start, old_vma->vm_end,
-				vm_flags);
+//		ret = mprotect_fixup(old_vma, &prev_ver, old_vma->vm_start, old_vma->vm_end,
+//				vm_flags);
+		printk("BEFORE stack remap old->vm_start VA:%lx PA:%lx\n", old_vma->vm_start, get_pa(old_vma->vm_start));
+		printk("BEFORE stack remap old->vm_end VA:%lx PA:%lx\n", old_vma->vm_end-4096, get_pa(old_vma->vm_end-4096));
 		if (ret) {
 			printk("mprotect_fixup FAILED\n");
 			return -ENOMEM;
@@ -732,9 +739,11 @@ int setup_arg_pages(struct linux_binprm *bprm,
 				printk("Conflicting vma start:%lx\n", new_vma->vm_start);
 		}
 		else if(get_pa(old_vma->vm_start)!=0 && mm->identity_mapping_en >= 2){
-			move_vma(old_vma, old_vma->vm_start, new_size, new_size, phys_addr, &locked);
-			printk("AFTER stack remap base VA:%lx PA:%lx\n", new_base, get_pa(new_base));
-			printk("AFTER stack remap top VA:%lx PA:%lx\n", stack_top, get_pa(stack_top));
+			unsigned long temp_base = move_vma(old_vma, old_vma->vm_start, PAGE_ALIGN(new_size), PAGE_ALIGN(new_size), phys_addr, &locked);
+			printk("AFTER stack base:%lx\n", temp_base);
+			old_vma = find_vma(mm, temp_base);
+			printk("AFTER stack remap old->vm_start VA:%lx PA:%lx\n", old_vma->vm_start, get_pa(old_vma->vm_start));
+			printk("AFTER stack remap old->vm_end VA:%lx PA:%lx\n", old_vma->vm_end-4096, get_pa(old_vma->vm_end-4096));
 		}
 		printk("stack vm->end:%lx stack_top:%lx\n", old_vma->vm_end, stack_top);
 	}
@@ -765,6 +774,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		printk("Updated stack_top:%lx\n", stack_top);
 		printk("Original arg_start:%lx vma->vm_start:%lx vma->vm_end:%lx\n", 
 			bprm->p, vma->vm_start, vma->vm_end);
+		printk("bprm->p:%lx bprm->exec:%lx bprm->loader:%lx\n", bprm->p, bprm->exec, bprm->loader);
 	}
 
 	if ((unlikely(stack_top < mmap_min_addr) ||
@@ -813,16 +823,16 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		/* mprotect_fixup is overkill to remove the temporary stack flags */
 		vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
 	}
-	else if(mm->identity_mapping_end >=2) { /* Swapnil -> need to copy over pages from vma to old_vma too */
-		printk("bprm->p:%lx bprm->exec:%lx bprm->loader:%lx\n", bprm->p, bprm->exec, bprm->loader);
-		printk("BEFORE stack populate VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+	else if(mm->identity_mapping_en >=2) { /* Swapnil -> need to copy over pages from vma to old_vma too */
 		unsigned long copy_size = vma->vm_end - vma->vm_start;
 		unsigned long dest_start = stack_top - copy_size; 
 		printk("Trying to move stack\n");
-		printk("dest_start:%lx copy_size:%lx\n", copy_size);
+		printk("dest_start:%lx copy_size:%lx\n", dest_start, copy_size);
 		if (copy_size != move_page_tables(vma, vma->vm_start, old_vma,
 						dest_start, copy_size, false))
 			return -ENOMEM;
+		printk("AFTER stack remap old->vm_start VA:%lx PA:%lx\n", old_vma->vm_start, get_pa(old_vma->vm_start));
+		printk("AFTER stack remap old->vm_end VA:%lx PA:%lx\n", old_vma->vm_end-4096, get_pa(old_vma->vm_end-4096));
 		printk("Succeeded in copying stack\n");
 	}
 
@@ -1462,13 +1472,13 @@ void setup_new_exec(struct linux_binprm * bprm)
         if(is_process_of_identity_mapping_stable(current->comm))
         {
                 current->mm->identity_mapping_en = 1;
-		printk("identity_mapping enabled for proc:%s\n", current->comm);
+		printk("identity_mapping (stable) enabled for proc:%s\n", current->comm);
 		//arch_pick_mmap_layout(current->mm);
         }
         else if(is_process_of_identity_mapping_testing(current->comm))
         {
                 current->mm->identity_mapping_en = 2;
-		printk("identity_mapping enabled for proc:%s\n", current->comm);
+		printk("identity_mapping (testing) enabled for proc:%s\n", current->comm);
 	}
         if(current && current->real_parent && current->real_parent != current && current->real_parent->mm && current->real_parent->mm->identity_mapping_en)
         {
