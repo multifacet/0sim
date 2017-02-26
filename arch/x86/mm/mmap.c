@@ -92,15 +92,14 @@ static unsigned long mmap_base(unsigned long rnd)
 
 	return PAGE_ALIGN(TASK_SIZE - gap - rnd);
 }
-
+/*
 static unsigned long mmap_lower_base(unsigned long start_code,
 					unsigned long rnd)
 {
 	unsigned long gap = 4*MIN_GAP;
 	return PAGE_ALIGN(start_code - gap - rnd);
 }
-
-
+*/
 
 /*
  * This function, called very early during the creation of a new

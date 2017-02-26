@@ -656,16 +656,6 @@ static int shift_arg_pages(struct vm_area_struct *vma, unsigned long shift)
 	return 0;
 }
 
-static unsigned long get_pa(unsigned long addr) {
-	unsigned long pa = 0;
-	struct vm_area_struct *vma = find_vma(current->mm, addr);
-	if(follow_pfn(vma, addr, &pa) < 0) { 
-		printk("Unable to retrieve pfn for addr:%lx\n", addr);
-	}
-	return (pa << PAGE_SHIFT);
-}
-
-
 /*
  * Finalizes the stack vm_area_struct. The flags and permissions are updated,
  * the stack is optionally relocated, and some extra space is added.
@@ -726,10 +716,6 @@ int setup_arg_pages(struct linux_binprm *bprm,
 //				vm_flags);
 		printk("BEFORE stack remap old->vm_start VA:%lx PA:%lx\n", new_vma->vm_start, get_pa(new_vma->vm_start));
 		printk("BEFORE stack remap old->vm_end VA:%lx PA:%lx\n", new_vma->vm_end-4096, get_pa(new_vma->vm_end-4096));
-		if (ret) {
-			printk("mprotect_fixup FAILED\n");
-			return -ENOMEM;
-		}
 
 		if(phys_addr > TASK_SIZE - new_size)
 			printk(".txt remap: Error 1: No space\n");
