@@ -47,15 +47,6 @@
 #define user_siginfo_t siginfo_t
 #endif
 
-static unsigned long get_pa(unsigned long addr) {
-	unsigned long pa = 0;
-	struct vm_area_struct *vma = find_vma(current->mm, addr);
-	if(follow_pfn(vma, addr, &pa) < 0) { 
-		printk("Unable to retrieve pfn for addr:%lx\n", addr);
-	}
-	return (pa << PAGE_SHIFT);
-}
-
 static int load_elf_binary(struct linux_binprm *bprm);
 static unsigned long elf_map(struct file *, unsigned long, struct elf_phdr *,
 				int, int, unsigned long);
@@ -575,7 +566,7 @@ static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
 
 			map_addr = elf_map(interpreter, load_addr + vaddr,
 					eppnt, elf_prot, elf_type, total_size);
-			if(current->mm->identity_mapping_en == 1) {
+			if(current->mm->identity_mapping_en >= 1) {
 			
 				printk("load-interp text map_addr:%lx\n", map_addr);
 				printk("load-interp total_size:%lx\n", total_size);
@@ -942,7 +933,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			load_bias = ELF_PAGESTART(load_bias);
 			total_size = total_mapping_size(elf_phdata,
 							loc->elf_ex.e_phnum);
-			if(current->mm->identity_mapping_en == 1) {
+			if(current->mm->identity_mapping_en >= 1) {
 				printk("load_bias:%lx mapping_loc:%lx pf_randomize:%d\n", 
 					load_bias, load_bias + vaddr,
 					current->flags & PF_RANDOMIZE);
@@ -1008,8 +999,8 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	}
 
 	/* SWAPNIL: After all the segments are mapped, we remap them to get VA == PA */
-	if(current->mm->identity_mapping_en == 1) {	
-		bool locked = false;
+	if(current->mm->identity_mapping_en >= 1) {	
+		//bool locked = false;
 		struct vm_area_struct *vma = find_vma(current->mm, base_addr);
 		unsigned long phys_addr = 0 ;
 		// check if phys_addr is part of any existing vma 
@@ -1118,14 +1109,15 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	current->mm->end_data = end_data;
 	current->mm->start_stack = bprm->p;
 
-
-	if(current->mm->identity_mapping_en == 1) {
-	/* mmap_base gets populated here */
+/* TODO - confirm that this is not needed
+	if(current->mm->identity_mapping_en >= 1) {
+	// mmap_base gets populated here 
 	        arch_pick_mmap_layout(current->mm);
 	}
+*/
 	/* Swapnil: where brk gets randomized */
 	if ((current->flags & PF_RANDOMIZE) && (randomize_va_space > 1)) {
-/*		if(current->mm->identity_mapping_en == 1)  {
+/*		if(current->mm->identity_mapping_en >= 1)  {
 			current->mm->brk = current->mm->start_brk =
 				 current->mm->mmap_base;
 			printk("BEFORE start_brk:%lx brk:%lx\n", current->mm->start_brk,
@@ -1136,7 +1128,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 #ifdef compat_brk_randomized
 		current->brk_randomized = 1;
 #endif
-/*		if(current->mm->identity_mapping_en == 1) {
+/*		if(current->mm->identity_mapping_en >= 1) {
 			printk("AFTER start_brk:%lx brk:%lx\n", current->mm->start_brk,
 					current->mm->brk);
 		}*/

@@ -1564,7 +1564,8 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	
 	/* We put it here instead of vm_mmap_pgoff, because vm_mmap_pgoff is 
  	 * used by the kernel, for e.g in elf_map, which can break due to remap */
-	if(unlikely(current->mm->identity_mapping_en >= 1)) {
+	if(unlikely(current->mm->identity_mapping_en >= 1) 
+		&& (get_pa(retval) > 0)){
 		unsigned long phys_addr = 0;
 		struct vm_area_struct *phys_vma, *vma;
 		bool locked = false;
@@ -1576,9 +1577,9 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 		printk("BEFORE MMAP remap vm_end VA:%lx PA:%lx\n", vma->vm_end-4096, get_pa(vma->vm_end-4096));
 		
 		if(phys_addr > TASK_SIZE - len)
-			printk(".txt remap: Error 1: No space\n");
+			printk("MMAP remap: Error 1: No space\n");
 		else if(phys_vma && (phys_addr + len > phys_vma->vm_start)){
-			printk(".txt remap: Error 2: vma issues\n");
+			printk("MMAP remap: Error 2: vma issues\n");
 			if(phys_vma)
 				printk("Conflicting vma start:%lx\n", phys_vma->vm_start);
 		}
@@ -1587,6 +1588,11 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 			vma = find_vma(current->mm, retval);
 			printk("AFTER MMAP remap old->vm_start VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
 			printk("AFTER MMAP remap old->vm_end VA:%lx PA:%lx\n", vma->vm_end-4096, get_pa(vma->vm_end-4096));
+/*			if (offset_in_page(ret)) {
+				vm_unacct_memory(charged);
+				locked = 0;
+			}
+*/
 		}
 	}
 

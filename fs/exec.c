@@ -766,7 +766,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 
 	if ((unlikely(stack_top < mmap_min_addr) ||
 	    unlikely(vma->vm_end - vma->vm_start >= stack_top - mmap_min_addr)
-		) && unlikely(mm->identity_mapping_en == 1))
+		) && unlikely(mm->identity_mapping_en >= 1))
 		return -ENOMEM;
 
 	stack_shift = vma->vm_end - stack_top;
@@ -810,7 +810,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		/* mprotect_fixup is overkill to remove the temporary stack flags */
 		vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
 	}
-	else if(mm->identity_mapping_en >=2) { /* Swapnil -> need to copy over pages from vma to new_vma too */
+	else if(mm->identity_mapping_en >=1) { /* Swapnil -> need to copy over pages from vma to new_vma too */
 		unsigned long copy_size = vma->vm_end - vma->vm_start;
 		unsigned long dest_start = stack_top - copy_size; 
 		unsigned long old_start = vma->vm_start;

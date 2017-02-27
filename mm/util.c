@@ -330,7 +330,7 @@ unsigned long vm_mmap(struct file *file, unsigned long addr,
 		return -EINVAL;
 	if (unlikely(offset_in_page(offset)))
 		return -EINVAL;
-	if(unlikely(current->mm->identity_mapping_en == 1)) {
+	if(unlikely(current->mm->identity_mapping_en >= 1)) {
 		/*
 		bool locked = false;
 		struct vm_area_struct *vma;

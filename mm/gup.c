@@ -572,9 +572,9 @@ static long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 
 	VM_BUG_ON(!!pages != !!(gup_flags & FOLL_GET));
 
-	if(mm->identity_mapping_en == 1) {
+/*	if(mm->identity_mapping_en >= 1) {
 		printk("i:%lu, start:%lx len:%lu\n", i, start, nr_pages);
-	}
+	}*/
 	/*
 	 * If FOLL_FORCE is set then do not force a full fault as the hinting
 	 * fault information is unrelated to the reference behaviour of a task
@@ -737,9 +737,9 @@ next_page:
 		start += page_increm * PAGE_SIZE;
 		nr_pages -= page_increm;
 	} while (nr_pages);
-	if(mm->identity_mapping_en == 1) {
+/*	if(mm->identity_mapping_en >= 1) {
 		printk("i:%lu, start:%lx len:%lu\n", i, start, nr_pages);
-	}
+	}*/
 	return i;
 }
 
