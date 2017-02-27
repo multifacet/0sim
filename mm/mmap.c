@@ -1509,7 +1509,7 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
         }
 	else if (mm &&  mm->apriori_paging_en == 1)
 	{
-		printk("VMA not under Apriori Paging Addr: %lx Len: %lx Flags: %lx Prot: %lx\n",addr,len,flags,prot);
+		printk("VMA not under Apriori Paging Addr: %lx Len: %lx Flags: 0x%lx Prot: 0x%lx\n",addr,len,flags,prot);
 	}
     }
 
@@ -1564,8 +1564,8 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	
 	/* We put it here instead of vm_mmap_pgoff, because vm_mmap_pgoff is 
  	 * used by the kernel, for e.g in elf_map, which can break due to remap */
-	if(unlikely(current->mm->identity_mapping_en >= 1) 
-		&& (get_pa(retval) > 0)){
+	if(unlikely((current->mm->identity_mapping_en >= 1) && ((flags & MAP_FIXED) != MAP_FIXED) 
+		&& (get_pa(retval) > 0))){ 
 		unsigned long phys_addr = 0;
 		struct vm_area_struct *phys_vma, *vma;
 		bool locked = false;

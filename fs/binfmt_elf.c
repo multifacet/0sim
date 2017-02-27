@@ -1010,7 +1010,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		mm_populate(base_addr, PAGE_ALIGN(base_size), 0);
 		phys_addr = get_pa(base_addr);
 		printk("load-bin BEFORE text map_addr VA:%lx PA:%lx\n", base_addr, phys_addr);
-		printk("load-bin BEFORE text map_addr+size VA:%lx PA:%lx\n", base_addr+vm_size, get_pa(base_addr+vm_size));
+		printk("load-bin BEFORE text map_addr+size-1 VA:%lx PA:%lx\n", base_addr+vm_size-1, get_pa(base_addr+vm_size-1));
 		printk("load-bin BEFORE base_size:%lx\n", base_size);
 		// Does this VMA include all mapped regions of elf? NO
 //		printk("vma size:%lx base_size:%lx\n", vma->vm_end-vma->vm_start, base_size);
@@ -1029,7 +1029,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		//	base_addr = move_vma(vma, base_addr+vm_size, PAGE_ALIGN(base_size-vm_size), PAGE_ALIGN(base_size-vm_size), phys_addr+vm_size, &locked);
 		}
 		printk("load-bin AFTER text map_addr VA:%lx PA:%lx\n", base_addr, get_pa(base_addr));
-		printk("load-bin AFTER text map_addr+size VA:%lx PA:%lx\n", base_addr+base_size-1, get_pa(base_addr+base_size-1));
+		printk("load-bin AFTER text map_addr+size-1 VA:%lx PA:%lx\n", base_addr+base_size-1, get_pa(base_addr+base_size-1));
 	}
 
 

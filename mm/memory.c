@@ -4589,6 +4589,8 @@ int fill_page_table_manually(struct mm_struct *mm , struct vm_area_struct *vma, 
         pte_unmap_unlock(ptep,ptl);
 
     }
+	/* We converted one big page into multiple smaller pages, so overcounted by one */
+        dec_mm_counter_fast(mm, MM_ANONPAGES); 
 	vma->apriori_en=1;
 
     return 0;
