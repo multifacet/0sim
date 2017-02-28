@@ -1,5 +1,5 @@
 #make -j 8; make modules -j 8; make modules_install -j8; make install -j8
-make -j8
+make -j8 | tee run.log
 if [ $? -eq 0 ]
 then
   echo "Successfully made"

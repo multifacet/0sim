@@ -999,7 +999,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	}
 
 	/* SWAPNIL: After all the segments are mapped, we remap them to get VA == PA */
-	if(current->mm->identity_mapping_en >= 1) {	
+	if(current->mm->identity_mapping_en >= 3) {	
 		//bool locked = false;
 		struct vm_area_struct *vma = find_vma(current->mm, base_addr);
 		unsigned long phys_addr = 0 ;

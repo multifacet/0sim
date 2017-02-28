@@ -1509,14 +1509,22 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
         }
 	else if (mm &&  mm->apriori_paging_en == 1)
 	{
-		printk("VMA not under Apriori Paging Addr: %lx Len: %lx Flags: 0x%lx Prot: 0x%lx\n",addr,len,flags,prot);
+		printk("VMA not under Apriori Paging Addr: %lx Len: %lu Flags: 0x%lx Prot: 0x%lx\n",addr,len,flags,prot);
+	}
+
+	if(mm && mm->apriori_paging_en == 1 && *populate == len) 
+	{
+		printk("VMA handled under Apriori Paging Addr: %lx Len: %lu Flags: 0x%lx Prot: 0x%lx\n",addr,len,flags,prot);
 	}
     }
 
+	
 
 
 	return addr;
 }
+
+#define BAD_ADDR(x) ((unsigned long)(x) >= TASK_SIZE)
 
 SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 		unsigned long, prot, unsigned long, flags,
@@ -1524,7 +1532,8 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 {
 	struct file *file = NULL;
 	unsigned long retval;
-
+	struct mm_struct *mm = current->mm;
+	unsigned long orig_len = 0;
 	if (!(flags & MAP_ANONYMOUS)) {
 		audit_mmap_fd(fd, flags);
 		file = fget(fd);
@@ -1560,18 +1569,57 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 
 	flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
 
+        if ( !file 
+	&& (( flags &  MAP_APRIORI_PAGING ) ==  MAP_APRIORI_PAGING 
+	|| ( mm &&  (mm->apriori_paging_en == 1)  &&  
+		( ((flags & (MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED))  == ( MAP_PRIVATE | MAP_ANONYMOUS )) 
+		|| ( flags == MAP_PRIVATE )
+                || ( flags == ( MAP_PRIVATE | MAP_POPULATE)) )))) {
+		int j;
+		unsigned long nr_pages = len/PAGE_SIZE;
+//		printk("nr_pages:%lu\n", nr_pages);
+		if( nr_pages < (1 << (MAX_ORDER-1))) /* Only optimize if less than 2^MAX_ORDER */ {
+//			printk("Fixing the length artificially BEFORE:%lu\n", len);
+			orig_len = len;
+			/* Find out if len is too big, or if len is perfect fit.. modify orig_len accordingly*/
+			for (j = MAX_ORDER-1 ; j >= 0 ; j--) {
+//				printk("Trying j:%d size:%d\n", j, (1 << j));
+				if ( (( 1 << j ) > nr_pages) && ((1 << (j-1)) <= nr_pages)) {
+//					printk("Found j:%d\n", j);
+					len = (1 << j)*PAGE_SIZE;
+					break;
+				}
+				else if ((1 << j)*PAGE_SIZE == len) { /* No changes needed */
+					orig_len = 0;
+				}
+			}
+			/* Edge case: not due to rounding error */
+			if(j > 0) {
+				if((1 << (j-1))*PAGE_SIZE == len) {
+					len = orig_len;
+					orig_len = 0;
+				}
+			}
+			if (orig_len < len) 
+				printk("Fixing the length artificially AFTER:%lu\n", len);
+		}
+	}
 	retval = vm_mmap_pgoff(file, addr, len, prot, flags, pgoff);
-	
+	if(orig_len) {
+		printk("MUNMAP BEFORE start:%lx len:%lu\n", retval+orig_len, len-orig_len);
+                if (!BAD_ADDR(retval) && (len > orig_len))
+			vm_munmap(retval+orig_len, len-orig_len);
+	}
 	/* We put it here instead of vm_mmap_pgoff, because vm_mmap_pgoff is 
- 	 * used by the kernel, for e.g in elf_map, which can break due to remap */
-	if(unlikely((current->mm->identity_mapping_en >= 1) && ((flags & MAP_FIXED) != MAP_FIXED) 
-		&& (get_pa(retval) > 0))){ 
+	 * used by the kernel, for e.g in elf_map, which can break due to remap */
+	if(unlikely((mm->identity_mapping_en >= 1) && ((flags & MAP_FIXED) != MAP_FIXED) 
+				&& (get_pa(retval) > 0))){ 
 		unsigned long phys_addr = 0;
 		struct vm_area_struct *phys_vma, *vma;
 		bool locked = false;
-		vma = find_vma(current->mm, retval);
+		vma = find_vma(mm, retval);
 		phys_addr = get_pa(retval);
-		phys_vma = find_vma(current->mm, phys_addr);
+		phys_vma = find_vma(mm, phys_addr);
 		
 		printk("BEFORE MMAP remap vm_start VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
 		printk("BEFORE MMAP remap vm_end VA:%lx PA:%lx\n", vma->vm_end-4096, get_pa(vma->vm_end-4096));
@@ -1585,7 +1633,7 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 		}
 		else if(get_pa(vma->vm_start)!=0 && current->mm->identity_mapping_en >= 2){
 			retval = move_vma(vma, vma->vm_start, PAGE_ALIGN(len), PAGE_ALIGN(len), phys_addr, &locked);
-			vma = find_vma(current->mm, retval);
+			vma = find_vma(mm, retval);
 			printk("AFTER MMAP remap old->vm_start VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
 			printk("AFTER MMAP remap old->vm_end VA:%lx PA:%lx\n", vma->vm_end-4096, get_pa(vma->vm_end-4096));
 /*			if (offset_in_page(ret)) {
