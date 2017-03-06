@@ -340,6 +340,7 @@ static unsigned long elf_map(struct file *filep, unsigned long addr,
 	unsigned long map_addr;
 	unsigned long size = eppnt->p_filesz + ELF_PAGEOFFSET(eppnt->p_vaddr);
 	unsigned long off = eppnt->p_offset - ELF_PAGEOFFSET(eppnt->p_vaddr);
+	struct mm_struct *mm = current->mm;
 	addr = ELF_PAGESTART(addr);
 	size = ELF_PAGEALIGN(size);
 
@@ -358,283 +359,317 @@ static unsigned long elf_map(struct file *filep, unsigned long addr,
 	*/
 	if (total_size) {
 		total_size = ELF_PAGEALIGN(total_size);
-		map_addr = vm_mmap(filep, addr, total_size, prot, type, off);
+		if(unlikely(mm->identity_mapping_en >= 1)) {
+			unsigned long phys_addr = 0;
+			struct vm_area_struct *phys_vma, *vma;
+			bool locked = false;
+			map_addr = vm_mmap(filep, addr, total_size, prot, type | MAP_POPULATE, off);
+			if(get_pa(map_addr) > 0) {
+				vma = find_vma(mm, map_addr);
+				phys_addr = get_pa(map_addr);
+				phys_vma = find_vma(mm, phys_addr);
+
+				printk("BEFORE CODE remap vm_start VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+				printk("BEFORE CODE remap vm_end VA:%lx PA:%lx\n", vma->vm_end-4096, get_pa(vma->vm_end-4096));
+
+				if(phys_addr > TASK_SIZE - total_size)
+					printk("CODE remap: Error 1: No space\n");
+				else if(phys_vma && (phys_addr + total_size > phys_vma->vm_start)){
+					printk("CODE remap: Error 2: vma issues\n");
+					if(phys_vma)
+						printk("Conflicting vma start:%lx\n", phys_vma->vm_start);
+				}
+				else if(get_pa(vma->vm_start)!=0 && mm->identity_mapping_en >= 2){
+					map_addr = move_vma(vma, vma->vm_start, PAGE_ALIGN(total_size), PAGE_ALIGN(total_size), phys_addr, &locked);
+					vma = find_vma(mm, map_addr);
+					printk("AFTER CODE remap old->vm_start VA:%lx PA:%lx\n", vma->vm_start, get_pa(vma->vm_start));
+					printk("AFTER CODE remap old->vm_end VA:%lx PA:%lx\n", vma->vm_end-4096, get_pa(vma->vm_end-4096));
+				}
+			}
+		} 
+		else
+			map_addr = vm_mmap(filep, addr, total_size, prot, type, off);
 		if (!BAD_ADDR(map_addr))
 			vm_munmap(map_addr+size, total_size-size);
 	} else
 		map_addr = vm_mmap(filep, addr, size, prot, type, off);
 
+	if(unlikely(mm->identity_mapping_en >= 1)) {
+		printk("elf_map: addr:%lx total_size:%lu size:%lu prot:%d\n", 
+			map_addr, total_size, size, prot);
+	}
+	
 	return(map_addr);
 }
 
 #endif /* !elf_map */
 
-static unsigned long total_mapping_size(struct elf_phdr *cmds, int nr)
-{
-	int i, first_idx = -1, last_idx = -1;
+	static unsigned long total_mapping_size(struct elf_phdr *cmds, int nr)
+	{
+		int i, first_idx = -1, last_idx = -1;
 
-	for (i = 0; i < nr; i++) {
-		if (cmds[i].p_type == PT_LOAD) {
-			last_idx = i;
-			if (first_idx == -1)
-				first_idx = i;
+		for (i = 0; i < nr; i++) {
+			if (cmds[i].p_type == PT_LOAD) {
+				last_idx = i;
+				if (first_idx == -1)
+					first_idx = i;
+			}
 		}
+		if (first_idx == -1)
+			return 0;
+
+		return cmds[last_idx].p_vaddr + cmds[last_idx].p_memsz -
+			ELF_PAGESTART(cmds[first_idx].p_vaddr);
 	}
-	if (first_idx == -1)
-		return 0;
 
-	return cmds[last_idx].p_vaddr + cmds[last_idx].p_memsz -
-				ELF_PAGESTART(cmds[first_idx].p_vaddr);
-}
-
-/**
- * load_elf_phdrs() - load ELF program headers
- * @elf_ex:   ELF header of the binary whose program headers should be loaded
- * @elf_file: the opened ELF binary file
- *
- * Loads ELF program headers from the binary file elf_file, which has the ELF
- * header pointed to by elf_ex, into a newly allocated array. The caller is
- * responsible for freeing the allocated data. Returns an ERR_PTR upon failure.
- */
-static struct elf_phdr *load_elf_phdrs(struct elfhdr *elf_ex,
-				       struct file *elf_file)
-{
-	struct elf_phdr *elf_phdata = NULL;
-	int retval, size, err = -1;
-
-	/*
-	 * If the size of this structure has changed, then punt, since
-	 * we will be doing the wrong thing.
+	/**
+	 * load_elf_phdrs() - load ELF program headers
+	 * @elf_ex:   ELF header of the binary whose program headers should be loaded
+	 * @elf_file: the opened ELF binary file
+	 *
+	 * Loads ELF program headers from the binary file elf_file, which has the ELF
+	 * header pointed to by elf_ex, into a newly allocated array. The caller is
+	 * responsible for freeing the allocated data. Returns an ERR_PTR upon failure.
 	 */
-	if (elf_ex->e_phentsize != sizeof(struct elf_phdr))
-		goto out;
+	static struct elf_phdr *load_elf_phdrs(struct elfhdr *elf_ex,
+			struct file *elf_file)
+	{
+		struct elf_phdr *elf_phdata = NULL;
+		int retval, size, err = -1;
 
-	/* Sanity check the number of program headers... */
-	if (elf_ex->e_phnum < 1 ||
-		elf_ex->e_phnum > 65536U / sizeof(struct elf_phdr))
-		goto out;
+		/*
+		 * If the size of this structure has changed, then punt, since
+		 * we will be doing the wrong thing.
+		 */
+		if (elf_ex->e_phentsize != sizeof(struct elf_phdr))
+			goto out;
 
-	/* ...and their total size. */
-	size = sizeof(struct elf_phdr) * elf_ex->e_phnum;
-	if (size > ELF_MIN_ALIGN)
-		goto out;
+		/* Sanity check the number of program headers... */
+		if (elf_ex->e_phnum < 1 ||
+				elf_ex->e_phnum > 65536U / sizeof(struct elf_phdr))
+			goto out;
 
-	elf_phdata = kmalloc(size, GFP_KERNEL);
-	if (!elf_phdata)
-		goto out;
+		/* ...and their total size. */
+		size = sizeof(struct elf_phdr) * elf_ex->e_phnum;
+		if (size > ELF_MIN_ALIGN)
+			goto out;
 
-	/* Read in the program headers */
-	retval = kernel_read(elf_file, elf_ex->e_phoff,
-			     (char *)elf_phdata, size);
-	if (retval != size) {
-		err = (retval < 0) ? retval : -EIO;
-		goto out;
-	}
+		elf_phdata = kmalloc(size, GFP_KERNEL);
+		if (!elf_phdata)
+			goto out;
 
-	/* Success! */
-	err = 0;
+		/* Read in the program headers */
+		retval = kernel_read(elf_file, elf_ex->e_phoff,
+				(char *)elf_phdata, size);
+		if (retval != size) {
+			err = (retval < 0) ? retval : -EIO;
+			goto out;
+		}
+
+		/* Success! */
+		err = 0;
 out:
-	if (err) {
-		kfree(elf_phdata);
-		elf_phdata = NULL;
+		if (err) {
+			kfree(elf_phdata);
+			elf_phdata = NULL;
+		}
+		return elf_phdata;
 	}
-	return elf_phdata;
-}
 
 #ifndef CONFIG_ARCH_BINFMT_ELF_STATE
 
-/**
- * struct arch_elf_state - arch-specific ELF loading state
- *
- * This structure is used to preserve architecture specific data during
- * the loading of an ELF file, throughout the checking of architecture
- * specific ELF headers & through to the point where the ELF load is
- * known to be proceeding (ie. SET_PERSONALITY).
- *
- * This implementation is a dummy for architectures which require no
- * specific state.
- */
-struct arch_elf_state {
-};
+	/**
+	 * struct arch_elf_state - arch-specific ELF loading state
+	 *
+	 * This structure is used to preserve architecture specific data during
+	 * the loading of an ELF file, throughout the checking of architecture
+	 * specific ELF headers & through to the point where the ELF load is
+	 * known to be proceeding (ie. SET_PERSONALITY).
+	 *
+	 * This implementation is a dummy for architectures which require no
+	 * specific state.
+	 */
+	struct arch_elf_state {
+	};
 
 #define INIT_ARCH_ELF_STATE {}
 
-/**
- * arch_elf_pt_proc() - check a PT_LOPROC..PT_HIPROC ELF program header
- * @ehdr:	The main ELF header
- * @phdr:	The program header to check
- * @elf:	The open ELF file
- * @is_interp:	True if the phdr is from the interpreter of the ELF being
- *		loaded, else false.
- * @state:	Architecture-specific state preserved throughout the process
- *		of loading the ELF.
- *
- * Inspects the program header phdr to validate its correctness and/or
- * suitability for the system. Called once per ELF program header in the
- * range PT_LOPROC to PT_HIPROC, for both the ELF being loaded and its
- * interpreter.
- *
- * Return: Zero to proceed with the ELF load, non-zero to fail the ELF load
- *         with that return code.
- */
-static inline int arch_elf_pt_proc(struct elfhdr *ehdr,
-				   struct elf_phdr *phdr,
-				   struct file *elf, bool is_interp,
-				   struct arch_elf_state *state)
-{
-	/* Dummy implementation, always proceed */
-	return 0;
-}
+	/**
+	 * arch_elf_pt_proc() - check a PT_LOPROC..PT_HIPROC ELF program header
+	 * @ehdr:	The main ELF header
+	 * @phdr:	The program header to check
+	 * @elf:	The open ELF file
+	 * @is_interp:	True if the phdr is from the interpreter of the ELF being
+	 *		loaded, else false.
+	 * @state:	Architecture-specific state preserved throughout the process
+	 *		of loading the ELF.
+	 *
+	 * Inspects the program header phdr to validate its correctness and/or
+	 * suitability for the system. Called once per ELF program header in the
+	 * range PT_LOPROC to PT_HIPROC, for both the ELF being loaded and its
+	 * interpreter.
+	 *
+	 * Return: Zero to proceed with the ELF load, non-zero to fail the ELF load
+	 *         with that return code.
+	 */
+	static inline int arch_elf_pt_proc(struct elfhdr *ehdr,
+			struct elf_phdr *phdr,
+			struct file *elf, bool is_interp,
+			struct arch_elf_state *state)
+	{
+		/* Dummy implementation, always proceed */
+		return 0;
+	}
 
-/**
- * arch_check_elf() - check an ELF executable
- * @ehdr:	The main ELF header
- * @has_interp:	True if the ELF has an interpreter, else false.
- * @interp_ehdr: The interpreter's ELF header
- * @state:	Architecture-specific state preserved throughout the process
- *		of loading the ELF.
- *
- * Provides a final opportunity for architecture code to reject the loading
- * of the ELF & cause an exec syscall to return an error. This is called after
- * all program headers to be checked by arch_elf_pt_proc have been.
- *
- * Return: Zero to proceed with the ELF load, non-zero to fail the ELF load
- *         with that return code.
- */
-static inline int arch_check_elf(struct elfhdr *ehdr, bool has_interp,
-				 struct elfhdr *interp_ehdr,
-				 struct arch_elf_state *state)
-{
-	/* Dummy implementation, always proceed */
-	return 0;
-}
+	/**
+	 * arch_check_elf() - check an ELF executable
+	 * @ehdr:	The main ELF header
+	 * @has_interp:	True if the ELF has an interpreter, else false.
+	 * @interp_ehdr: The interpreter's ELF header
+	 * @state:	Architecture-specific state preserved throughout the process
+	 *		of loading the ELF.
+	 *
+	 * Provides a final opportunity for architecture code to reject the loading
+	 * of the ELF & cause an exec syscall to return an error. This is called after
+	 * all program headers to be checked by arch_elf_pt_proc have been.
+	 *
+	 * Return: Zero to proceed with the ELF load, non-zero to fail the ELF load
+	 *         with that return code.
+	 */
+	static inline int arch_check_elf(struct elfhdr *ehdr, bool has_interp,
+			struct elfhdr *interp_ehdr,
+			struct arch_elf_state *state)
+	{
+		/* Dummy implementation, always proceed */
+		return 0;
+	}
 
 #endif /* !CONFIG_ARCH_BINFMT_ELF_STATE */
 
-/* This is much more generalized than the library routine read function,
-   so we keep this separate.  Technically the library read function
-   is only provided so that we can read a.out libraries that have
-   an ELF header */
+	/* This is much more generalized than the library routine read function,
+	   so we keep this separate.  Technically the library read function
+	   is only provided so that we can read a.out libraries that have
+	   an ELF header */
 
-static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
-		struct file *interpreter, unsigned long *interp_map_addr,
-		unsigned long no_base, struct elf_phdr *interp_elf_phdata)
-{
-	struct elf_phdr *eppnt;
-	unsigned long load_addr = 0;
-	int load_addr_set = 0;
-	unsigned long last_bss = 0, elf_bss = 0;
-	unsigned long error = ~0UL;
-	unsigned long total_size;
-	int i;
+	static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
+			struct file *interpreter, unsigned long *interp_map_addr,
+			unsigned long no_base, struct elf_phdr *interp_elf_phdata)
+	{
+		struct elf_phdr *eppnt;
+		unsigned long load_addr = 0;
+		int load_addr_set = 0;
+		unsigned long last_bss = 0, elf_bss = 0;
+		unsigned long error = ~0UL;
+		unsigned long total_size;
+		int i;
 
-	/* First of all, some simple consistency checks */
-	if (interp_elf_ex->e_type != ET_EXEC &&
-	    interp_elf_ex->e_type != ET_DYN)
-		goto out;
-	if (!elf_check_arch(interp_elf_ex))
-		goto out;
-	if (!interpreter->f_op->mmap)
-		goto out;
+		/* First of all, some simple consistency checks */
+		if (interp_elf_ex->e_type != ET_EXEC &&
+				interp_elf_ex->e_type != ET_DYN)
+			goto out;
+		if (!elf_check_arch(interp_elf_ex))
+			goto out;
+		if (!interpreter->f_op->mmap)
+			goto out;
 
-	total_size = total_mapping_size(interp_elf_phdata,
-					interp_elf_ex->e_phnum);
-	if (!total_size) {
-		error = -EINVAL;
-		goto out;
-	}
-
-	eppnt = interp_elf_phdata;
-	for (i = 0; i < interp_elf_ex->e_phnum; i++, eppnt++) {
-		if (eppnt->p_type == PT_LOAD) {
-			int elf_type = MAP_PRIVATE | MAP_DENYWRITE;
-			int elf_prot = 0;
-			unsigned long vaddr = 0;
-			unsigned long k, map_addr;
-
-			if (eppnt->p_flags & PF_R)
-		    		elf_prot = PROT_READ;
-			if (eppnt->p_flags & PF_W)
-				elf_prot |= PROT_WRITE;
-			if (eppnt->p_flags & PF_X)
-				elf_prot |= PROT_EXEC;
-			vaddr = eppnt->p_vaddr;
-			if (interp_elf_ex->e_type == ET_EXEC || load_addr_set)
-				elf_type |= MAP_FIXED;
-			else if (no_base && interp_elf_ex->e_type == ET_DYN)
-				load_addr = -vaddr;
-
-			map_addr = elf_map(interpreter, load_addr + vaddr,
-					eppnt, elf_prot, elf_type, total_size);
-			if(current->mm->identity_mapping_en >= 1) {
-			
-				printk("load-interp text map_addr:%lx\n", map_addr);
-				printk("load-interp total_size:%lx\n", total_size);
-			} 
-			total_size = 0;
-			if (!*interp_map_addr)
-				*interp_map_addr = map_addr;
-			error = map_addr;
-			if (BAD_ADDR(map_addr))
-				goto out;
-
-			if (!load_addr_set &&
-			    interp_elf_ex->e_type == ET_DYN) {
-				load_addr = map_addr - ELF_PAGESTART(vaddr);
-				load_addr_set = 1;
-			}
-
-			/*
-			 * Check to see if the section's size will overflow the
-			 * allowed task size. Note that p_filesz must always be
-			 * <= p_memsize so it's only necessary to check p_memsz.
-			 */
-			k = load_addr + eppnt->p_vaddr;
-			if (BAD_ADDR(k) ||
-			    eppnt->p_filesz > eppnt->p_memsz ||
-			    eppnt->p_memsz > TASK_SIZE ||
-			    TASK_SIZE - eppnt->p_memsz < k) {
-				error = -ENOMEM;
-				goto out;
-			}
-
-			/*
-			 * Find the end of the file mapping for this phdr, and
-			 * keep track of the largest address we see for this.
-			 */
-			k = load_addr + eppnt->p_vaddr + eppnt->p_filesz;
-			if (k > elf_bss)
-				elf_bss = k;
-
-			/*
-			 * Do the same thing for the memory mapping - between
-			 * elf_bss and last_bss is the bss section.
-			 */
-			k = load_addr + eppnt->p_vaddr + eppnt->p_memsz;
-			if (k > last_bss)
-				last_bss = k;
+		total_size = total_mapping_size(interp_elf_phdata,
+				interp_elf_ex->e_phnum);
+		if (!total_size) {
+			error = -EINVAL;
+			goto out;
 		}
-	}
 
-	/*
-	 * Now fill out the bss section: first pad the last page from
-	 * the file up to the page boundary, and zero it from elf_bss
-	 * up to the end of the page.
-	 */
-	if (padzero(elf_bss)) {
-		error = -EFAULT;
-		goto out;
-	}
-	/*
-	 * Next, align both the file and mem bss up to the page size,
-	 * since this is where elf_bss was just zeroed up to, and where
-	 * last_bss will end after the vm_brk() below.
-	 */
-	elf_bss = ELF_PAGEALIGN(elf_bss);
-	last_bss = ELF_PAGEALIGN(last_bss);
-	/* Finally, if there is still more bss to allocate, do it. */
-	if (last_bss > elf_bss) {
-		error = vm_brk(elf_bss, last_bss - elf_bss);
+		eppnt = interp_elf_phdata;
+		for (i = 0; i < interp_elf_ex->e_phnum; i++, eppnt++) {
+			if (eppnt->p_type == PT_LOAD) {
+				int elf_type = MAP_PRIVATE | MAP_DENYWRITE;
+				int elf_prot = 0;
+				unsigned long vaddr = 0;
+				unsigned long k, map_addr;
+
+				if (eppnt->p_flags & PF_R)
+					elf_prot = PROT_READ;
+				if (eppnt->p_flags & PF_W)
+					elf_prot |= PROT_WRITE;
+				if (eppnt->p_flags & PF_X)
+					elf_prot |= PROT_EXEC;
+				vaddr = eppnt->p_vaddr;
+				if (interp_elf_ex->e_type == ET_EXEC || load_addr_set)
+					elf_type |= MAP_FIXED;
+				else if (no_base && interp_elf_ex->e_type == ET_DYN)
+					load_addr = -vaddr;
+
+				map_addr = elf_map(interpreter, load_addr + vaddr,
+						eppnt, elf_prot, elf_type, total_size);
+				if(current->mm->identity_mapping_en >= 1) {
+
+					printk("load-interp text map_addr:%lx\n", map_addr);
+					printk("load-interp total_size:%lx\n", total_size);
+				} 
+				total_size = 0;
+				if (!*interp_map_addr)
+					*interp_map_addr = map_addr;
+				error = map_addr;
+				if (BAD_ADDR(map_addr))
+					goto out;
+
+				if (!load_addr_set &&
+						interp_elf_ex->e_type == ET_DYN) {
+					load_addr = map_addr - ELF_PAGESTART(vaddr);
+					load_addr_set = 1;
+				}
+
+				/*
+				 * Check to see if the section's size will overflow the
+				 * allowed task size. Note that p_filesz must always be
+				 * <= p_memsize so it's only necessary to check p_memsz.
+				 */
+				k = load_addr + eppnt->p_vaddr;
+				if (BAD_ADDR(k) ||
+						eppnt->p_filesz > eppnt->p_memsz ||
+						eppnt->p_memsz > TASK_SIZE ||
+						TASK_SIZE - eppnt->p_memsz < k) {
+					error = -ENOMEM;
+					goto out;
+				}
+
+				/*
+				 * Find the end of the file mapping for this phdr, and
+				 * keep track of the largest address we see for this.
+				 */
+				k = load_addr + eppnt->p_vaddr + eppnt->p_filesz;
+				if (k > elf_bss)
+					elf_bss = k;
+
+				/*
+				 * Do the same thing for the memory mapping - between
+				 * elf_bss and last_bss is the bss section.
+				 */
+				k = load_addr + eppnt->p_vaddr + eppnt->p_memsz;
+				if (k > last_bss)
+					last_bss = k;
+			}
+		}
+
+		/*
+		 * Now fill out the bss section: first pad the last page from
+		 * the file up to the page boundary, and zero it from elf_bss
+		 * up to the end of the page.
+		 */
+		if (padzero(elf_bss)) {
+			error = -EFAULT;
+			goto out;
+		}
+		/*
+		 * Next, align both the file and mem bss up to the page size,
+		 * since this is where elf_bss was just zeroed up to, and where
+		 * last_bss will end after the vm_brk() below.
+		 */
+		elf_bss = ELF_PAGEALIGN(elf_bss);
+		last_bss = ELF_PAGEALIGN(last_bss);
+		/* Finally, if there is still more bss to allocate, do it. */
+		if (last_bss > elf_bss) {
+			error = vm_brk(elf_bss, last_bss - elf_bss);
 		if (error)
 			goto out;
 	}

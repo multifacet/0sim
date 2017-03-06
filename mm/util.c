@@ -337,9 +337,9 @@ unsigned long vm_mmap(struct file *file, unsigned long addr,
 		struct vm_area_struct *new_vma;
 		unsigned long phys_addr;
 		*/
-		printk("vm_mmap_pgoff addr:%lx len:%lx prot:%lx flag:%lx offset:%lx\n",
-			addr, len, prot, flag, offset);
 		addr = vm_mmap_pgoff(file, addr, len, prot, flag, offset >> PAGE_SHIFT);
+		printk("vm_mmap_pgoff addr:%lx len:%lx prot:%lx flag:%lx offset:%lx EXEC:%lu\n",
+			addr, len, prot, flag, offset, (prot & PROT_EXEC));
 		/*phys_addr = get_pa(addr);
 		if(addr != phys_addr && (addr>0) && 0) { 
 			vma =  find_vma(current->mm, addr);
