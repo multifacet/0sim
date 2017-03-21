@@ -2902,9 +2902,12 @@ int __do_fault(struct vm_fault *vmf)
 		return VM_FAULT_HWPOISON;
 	}
 
-	if (unlikely(!(ret & VM_FAULT_LOCKED)))
+	if (unlikely(!(ret & VM_FAULT_LOCKED))) {
+		if(current->mm->identity_mapping_en>=2)
+			printk("Page:%lx is Locked!\n", vmf->address);
 		lock_page(vmf->page);
-	else
+	}
+	else 
 		VM_BUG_ON_PAGE(!PageLocked(vmf->page), vmf->page);
 
 	return ret;
@@ -4308,6 +4311,7 @@ int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *v
 	    .pgoff = linear_page_index(vma, new_addr),
 	    .gfp_mask = __get_fault_gfp_mask(vma),
     };
+
     pgd = pgd_offset(mm, addr);
     if (pgd_none(*pgd) || pgd_bad(*pgd))
         printk(KERN_INFO "Bad pgd");
@@ -4339,7 +4343,7 @@ int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *v
         new_addr = ( addr + i * PAGE_SIZE );
 	vmf.address = new_addr & PAGE_MASK;
 	vmf.pgoff = linear_page_index(vma, new_addr);
-        
+        vmf.pmd = pmd;	
 	// do counter updates before entering really critical section.
         check_sync_rss_stat(current);
 
@@ -4383,7 +4387,7 @@ int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *v
 
         pgoff = (((new_addr & PAGE_MASK)
                 - vma->vm_start) >> PAGE_SHIFT) + vma->vm_pgoff;
-
+	//vmf.pgoff = pgoff;
         if (unlikely(anon_vma_prepare(vma)))
             return VM_FAULT_OOM;
 
@@ -4418,7 +4422,7 @@ int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *v
 //            page_cache_release(fault_page);
 //            goto uncharge_out;
 //        }
-
+	
         alloc_set_pte(&vmf, memcg, new_page);
         pte_unmap_unlock(ptep, ptl);
         unlock_page(vmf.page);

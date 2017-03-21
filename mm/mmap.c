@@ -1496,23 +1496,31 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	}
 */
 	else if ( (( flags &  MAP_APRIORI_PAGING ) ==  MAP_APRIORI_PAGING ) ||
-//             ( mm &&  mm->apriori_paging_en == 1  &&  ( (flags & (MAP_PRIVATE | MAP_EXECUTABLE)) == MAP_PRIVATE )) ||
-             ( mm &&  mm->apriori_paging_en == 1  &&  ( flags == MAP_PRIVATE )) ||
-             ( mm &&  mm->apriori_paging_en == 1  &&  ( flags == ( MAP_PRIVATE | MAP_POPULATE))))
+             ( mm &&  (mm->apriori_paging_en == 1)  &&  ( flags == MAP_PRIVATE )) ||
+             ( mm &&  (mm->apriori_paging_en == 1)  &&  ( flags == ( MAP_PRIVATE | MAP_POPULATE))))
         {
-            if (prot == (PROT_READ | PROT_WRITE)) {
+            if (file && ((prot == (PROT_READ | PROT_WRITE)))) {// || (prot == (PROT_READ | PROT_EXEC)))) {
                 //mm->apriori_paging_mfile_en = 1;
+                printk("Apriori Paging for memory mapped files\n");
                 *apriori_flag = 2; // memory mapped files
                 *populate = len;
-                //printk(KERN_INFO "mmap for memory mapped file - len: %ld...\n", len);
             }
         }
+	else if (mm &&  (mm->identity_mapping_en >= 2)  
+		&&  ( flags == ( MAP_PRIVATE | MAP_POPULATE | MAP_EXECUTABLE | MAP_DENYWRITE ))){
+            if (file && ((prot == (PROT_READ | PROT_EXEC)))){ 
+                printk("Apriori Paging for memory mapped code segment\n");
+                *apriori_flag = 2; // memory mapped files
+                *populate = len;
+            }
+	
+	}
 	else if (mm &&  mm->apriori_paging_en == 1)
 	{
 		printk("VMA not under Apriori Paging Addr: %lx Len: %lu Flags: 0x%lx Prot: 0x%lx\n",addr,len,flags,prot);
 	}
 
-	if(mm && mm->apriori_paging_en == 1 && *populate == len) 
+	if(mm && (mm->apriori_paging_en == 1) && (*populate == len)) 
 	{
 		printk("VMA handled under Apriori Paging Addr: %lx Len: %lu Flags: 0x%lx Prot: 0x%lx\n",addr,len,flags,prot);
 	}
@@ -1584,7 +1592,7 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 			/* Find out if len is too big, or if len is perfect fit.. modify orig_len accordingly*/
 			for (j = MAX_ORDER-1 ; j >= 0 ; j--) {
 //				printk("Trying j:%d size:%d\n", j, (1 << j));
-				if ( (( 1 << j ) > nr_pages) && ((1 << (j-1)) <= nr_pages)) {
+				if ( (( 1 << j ) > nr_pages) && ((1 << (j-1)) < nr_pages)) {
 //					printk("Found j:%d\n", j);
 					len = (1 << j)*PAGE_SIZE;
 					break;
@@ -1593,14 +1601,7 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 					orig_len = 0;
 				}
 			}
-			/* Edge case: not due to rounding error */
-			if(j > 0) {
-				if((1 << (j-1))*PAGE_SIZE == len) {
-					len = orig_len;
-					orig_len = 0;
-				}
-			}
-			if (orig_len < len) 
+			if (orig_len != len) 
 				printk("Fixing the length artificially AFTER:%lu\n", len);
 		}
 	}
