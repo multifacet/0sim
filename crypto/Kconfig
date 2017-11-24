@@ -1521,6 +1521,14 @@ config CRYPTO_LZO
 	help
 	  This is the LZO algorithm.
 
+config CRYPTO_LZOSB
+	tristate "LZO compression algorithm with single-byte optimization"
+	select CRYPTO_ALGAPI
+	select LZOSB_COMPRESS
+	select LZOSB_DECOMPRESS
+	help
+	  This is the LZO algorithm with single-byte optimization.
+
 config CRYPTO_842
 	tristate "842 compression algorithm"
 	select CRYPTO_ALGAPI
