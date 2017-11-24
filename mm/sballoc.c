@@ -62,7 +62,7 @@
 struct sballoc_page {
     struct list_head list;
     struct page *page;
-}
+};
 
 /*
  * The allocator's state
@@ -213,7 +213,7 @@ static void *sballoc_zpool_create(
 
     // Init
     spin_lock_init(&pool->lock);
-    LIST_HEAD_INIT(&pool->pages);
+    INIT_LIST_HEAD(&pool->pages);
     pool->nr_pages = 0;
 
     return pool;
@@ -240,33 +240,38 @@ static void sballoc_zpool_destroy(void *pool)
  * -EINVAL is returned.
  */
 static int sballoc_zpool_malloc(
-        void *pool,
+        void *zpool,
         size_t size,
         gfp_t gfp,
         unsigned long *handle)
 {
+    struct sballoc_pool *pool = zpool;
+    struct entry *entry;
+    struct page *page;
+    struct sballoc_page *sbpage;
+
     // Check for invalid sizes
     if (size == 0) {
         return -EINVAL;
     }
 
-    if (size > 1) {
+    if (size > 9) {
         return -ENOMEM;
     }
 
 	spin_lock(&pool->lock);
 
     // Try to find an existing free slot
-    struct entry *free = sballoc_find_free(pool);
+    entry = sballoc_find_free(pool);
 
     // If failed, allocate a new page
-    if (!free) {
+    if (!entry) {
         spin_unlock(&pool->lock);
-        struct page *page = alloc_page(gfp);
+        page = alloc_page(gfp);
         if (!page) {
             return -ENOMEM;
         }
-        struct sballoc_page *sbpage = kzalloc(sizeof(struct sballoc_page), gfp);
+        sbpage = kzalloc(sizeof(struct sballoc_page), gfp);
         if (!sbpage) {
             return -ENOMEM;
         }
@@ -277,12 +282,13 @@ static int sballoc_zpool_malloc(
         list_add(&sbpage->list, &pool->pages);
         pool->nr_pages++;
 
-        free = sballoc_find_free_in_page(page);
+        // Get a free allocation
+        entry = sballoc_find_free_in_page(page);
     }
 
     // At this point, we have a free entry, so we can complete the allocation.
     mark_used(entry);
-    *handle = &entry;
+    *handle = (unsigned long)entry;
 
 	spin_unlock(&pool->lock);
 
@@ -292,12 +298,15 @@ static int sballoc_zpool_malloc(
 /*
  * Free the given allocation.
  */
-static void sballoc_zpool_free(void *pool, unsigned long handle)
+static void sballoc_zpool_free(void *zpool, unsigned long handle)
 {
+    struct sballoc_pool *pool = zpool;
+    struct entry *entry;
+
 	spin_lock(&pool->lock);
 
     // Convert handle back to entry pointer
-    struct entry *entry = (struct entry *)handle;
+    entry = (struct entry *)handle;
 
     mark_free(entry);
 
@@ -337,8 +346,9 @@ static void sballoc_zpool_unmap(void *pool, unsigned long handle)
 /*
  * Get the total size in byets of the pool.
  */
-static u64 sballoc_zpool_total_size(void *pool)
+static u64 sballoc_zpool_total_size(void *zpool)
 {
+    struct sballoc_pool *pool = zpool;
     return pool->nr_pages * PAGE_SIZE;
 }
 
