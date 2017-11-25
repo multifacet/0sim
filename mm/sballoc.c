@@ -49,7 +49,7 @@
 #define SBALLOC_ENTRY_TO_IDX(entry) ((((unsigned long)(entry)) % PAGE_SIZE) / 9)
 
 // Get the address of the raw page an entry is on.
-#define SBALLOC_ENTRY_PAGE(entry) ((void *)(((unsigned long)(entry)) % PAGE_SIZE))
+#define SBALLOC_ENTRY_PAGE(entry) ((void *)(((unsigned long)(entry)) & PAGE_MASK))
 
 /*
  * Make a linked list of allocated pages.
@@ -216,6 +216,8 @@ static void *sballoc_zpool_create(
     INIT_LIST_HEAD(&pool->pages);
     pool->nr_pages = 0;
 
+    pr_debug("Created sballoc_pool %p\n", pool);
+
     return pool;
 }
 
@@ -226,6 +228,8 @@ static void *sballoc_zpool_create(
  */
 static void sballoc_zpool_destroy(void *pool)
 {
+    pr_debug("Destroy sballoc_pool %p\n", pool);
+
     kfree(pool);
 }
 
@@ -250,12 +254,15 @@ static int sballoc_zpool_malloc(
     struct page *page;
     struct sballoc_page *sbpage;
 
+    pr_debug("ALLOC sballoc_pool %p %lx %x %p\n", pool, size, gfp, handle);
+
     // Check for invalid sizes
     if (size == 0) {
         return -EINVAL;
     }
 
     if (size > 9) {
+        pr_debug("ALLOC REJECT SIZE=%lu\n", size);
         return -ENOMEM;
     }
 
@@ -303,6 +310,8 @@ static void sballoc_zpool_free(void *zpool, unsigned long handle)
     struct sballoc_pool *pool = zpool;
     struct entry *entry;
 
+    pr_debug("FREE sballoc_pool %p %lx\n", pool, handle);
+
 	spin_lock(&pool->lock);
 
     // Convert handle back to entry pointer
@@ -318,6 +327,7 @@ static int sballoc_zpool_shrink(
         unsigned int pages,
         unsigned int *reclaimed)
 {
+    pr_debug("SHRINK sballoc_pool %p %d %p\n", pool, pages, reclaimed);
     // TODO
     return -EINVAL;
 }
@@ -333,6 +343,8 @@ static void *sballoc_zpool_map(
         unsigned long handle,
         enum zpool_mapmode mm)
 {
+    pr_debug("MAP sballoc_pool %p %lx\n", pool, handle);
+
     return (void *)handle;
 }
 
@@ -341,6 +353,7 @@ static void *sballoc_zpool_map(
  */
 static void sballoc_zpool_unmap(void *pool, unsigned long handle)
 {
+    pr_debug("UNMAP sballoc_pool %p %lx\n", pool, handle);
 }
 
 /*
@@ -349,6 +362,9 @@ static void sballoc_zpool_unmap(void *pool, unsigned long handle)
 static u64 sballoc_zpool_total_size(void *zpool)
 {
     struct sballoc_pool *pool = zpool;
+
+    pr_debug("TOTAL SIZE sballoc_pool %p\n", pool);
+
     return pool->nr_pages * PAGE_SIZE;
 }
 
