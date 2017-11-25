@@ -51,13 +51,17 @@
 // Get the address of the raw page an entry is on.
 #define SBALLOC_ENTRY_PAGE(entry) ((void *)(((unsigned long)(entry)) & PAGE_MASK))
 
+// Get the address of the heuristic counter
+#define SBALLOC_HEURISTIC_ADDR(page) ((unsigned long *)&(SBALLOC_BITMAP_ADDR(page) \
+                                                        [SBALLOC_BITMAP_BYTES]))
+
 /*
  * Make a linked list of allocated pages.
  *
  * Each page has the following format:
  * - The first 4032B consist of 448 9B allocations.
  * - Starting from byte 4032, the next 56B consist of used bits.
- * - Last 8B unused.
+ * - Last 8B used to keep a rough heuristic for where the next free allocation is.
  */
 struct sballoc_page {
     struct list_head list;
@@ -102,8 +106,20 @@ static struct entry *sballoc_find_free_in_page(struct page *page)
     void *page_raw = page_address(page);
     char *bitmap = SBALLOC_BITMAP_ADDR(page_raw);
 
+    unsigned long *heuristic = SBALLOC_HEURISTIC_ADDR(page_raw);
+
     int i;
-    for (i = 0; i < SBALLOC_BITMAP_BYTES; i++) {
+
+    BUG_ON(!page_raw);
+
+    // Start from the heuristic address... It is possible that we waste
+    // some space by doing this (e.g. we miss allocations because of it).
+    // We will have to quantify how bad this is...
+    //
+    // Empirically, on some basic microbenchmarks, this halves the time
+    // spent in this function, but doubles space usage. Also, once the
+    // space becomes fragmented, we start spending a lot of time here again.
+    for (i = *heuristic / 8; i < SBALLOC_BITMAP_BYTES; i++) {
         if (bitmap[i] < 0xFF) {
             // Check which allocation is free
             if (!(bitmap[i] & 0x01)) {
@@ -162,6 +178,8 @@ static struct entry *sballoc_find_free(struct sballoc_pool *pool)
 
 /*
  * Mark the given entry used.
+ *
+ * NOTE: the caller should already be holding the lock.
  */
 static void mark_used(struct entry* entry)
 {
@@ -172,12 +190,24 @@ static void mark_used(struct entry* entry)
     int byte = idx / 8;
     int bit  = idx % 8;
 
+    unsigned long *heuristic = SBALLOC_HEURISTIC_ADDR(page_raw);
+
+    if (!page_raw) {
+        printk(KERN_ERR "null page_raw. entry=%p. idx=%lu\n", entry, idx);
+        BUG();
+    }
+
     // Set the bit
     SBALLOC_BITMAP_ADDR(page_raw)[byte] |= 1 << bit;
+
+    // Update the heuristic
+    *heuristic += 1;
 }
 
 /*
  * Mark the given entry free.
+ *
+ * NOTE: the caller should already be holding the lock.
  */
 static void mark_free(struct entry* entry)
 {
@@ -188,8 +218,19 @@ static void mark_free(struct entry* entry)
     int byte = idx / 8;
     int bit  = idx % 8;
 
+    unsigned long *heuristic = SBALLOC_HEURISTIC_ADDR(page_raw);
+
+    BUG_ON(!page_raw);
+
     // Clear the bit
     SBALLOC_BITMAP_ADDR(page_raw)[byte] &= ~(1 << bit);
+
+    // Try not to waste to much space. I am not sure how well this will work,
+    // but the gist is that if there is a page with some free allocations that
+    // is otherwise full, we will reset the counter...
+    if (*heuristic == SBALLOC_PER_PAGE_ALLOCS) {
+        *heuristic = 0;
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -273,6 +314,8 @@ static int sballoc_zpool_malloc(
 
     // If failed, allocate a new page
     if (!entry) {
+        void *page_raw;
+
         spin_unlock(&pool->lock);
         page = alloc_page(gfp);
         if (!page) {
@@ -284,6 +327,10 @@ static int sballoc_zpool_malloc(
         }
         spin_lock(&pool->lock);
 
+        // Zero the page
+        page_raw = page_address(page);
+        clear_page(page_raw);
+
         // Add the page to the allocator
         sbpage->page = page;
         list_add(&sbpage->list, &pool->pages);
@@ -291,6 +338,8 @@ static int sballoc_zpool_malloc(
 
         // Get a free allocation
         entry = sballoc_find_free_in_page(page);
+
+        BUG_ON(!entry);
     }
 
     // At this point, we have a free entry, so we can complete the allocation.
