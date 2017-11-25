@@ -163,6 +163,11 @@ static struct entry *sballoc_find_free(struct sballoc_pool *pool)
     struct entry *found = NULL;
 
     // For each page in the LRU list, search that page for free allocations
+    //
+    // TODO: It is likely for free pages to be at the beginning of the list,
+    // rather than at the ends, so scanning later pages could just waste time.
+    // On the other hand, this is a relatively rare event, so maybe it doesn't
+    // matter that much?
     list_for_each(pos, &pool->pages) {
         struct sballoc_page *sbpage = list_entry(pos, struct sballoc_page, list);
         found = sballoc_find_free_in_page(sbpage->page);
@@ -229,6 +234,9 @@ static void mark_free(struct entry* entry)
     // but the gist is that if there is a page with some free allocations that
     // is otherwise full, we will reset the counter...
     if (*heuristic == SBALLOC_PER_PAGE_ALLOCS) {
+        // TODO: this seems to decrease performance a lot when the space
+        // becomes fragmented. By commenting out this line, we will waste a
+        // whole lot of space, but possibly improve performance.
         *heuristic = 0;
     }
 }
