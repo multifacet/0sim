@@ -1,7 +1,7 @@
 #ifndef __RADIX_BITMAP_H__
 #define __RADIX_BITMAP_H__
 
-#include <linux/types.h>
+#include <linux/mm_types.h>
 
 /*
  * A sparse bitmap implementation, structured as a radix tree of two levels
@@ -39,7 +39,7 @@ struct radix_bitmap {
 /*
  * Initialize the given radix bitmap struct to a valid empty bitmap.
  */
-void radix_bitmap_create(struct radix_bitmap *rb);
+void radix_bitmap_create(struct radix_bitmap *rb, gfp_t gfp);
 
 /*
  * Destroy the given bitmap and free all of its memory.
@@ -54,7 +54,7 @@ bool radix_bitmap_get(struct radix_bitmap *rb, unsigned long idx);
 /*
  * Set the given bit.
  */
-void radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx);
+void radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx, gfp_t gfp);
 
 /*
  * Unset the given bit.

@@ -41,6 +41,7 @@
 #include <linux/swapops.h>
 #include <linux/writeback.h>
 #include <linux/pagemap.h>
+#include <linux/radix_bitmap.h>
 
 /*********************************
 * statistics
