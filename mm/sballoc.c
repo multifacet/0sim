@@ -289,8 +289,8 @@ static void sballoc_zpool_destroy(void *pool)
  * gfp should not set __GFP_HIGHMEM as highmem pages cannot be used
  * as zbud pool pages.
  *
- * If more than 1B is requested, -ENOMEM is returned. If 0B is requested,
- * -EINVAL is returned.
+ * If more than 1B is requested, -ENONSP is returned. If 0B is requested,
+ * -EINVAL is returned. If no space is available -ENOMEM is returned.
  */
 static int sballoc_zpool_malloc(
         void *zpool,
@@ -312,7 +312,7 @@ static int sballoc_zpool_malloc(
 
     if (size > 9) {
         pr_debug("ALLOC REJECT SIZE=%lu\n", size);
-        return -ENOMEM;
+        return -ENOSPC; // Not compressible enough
     }
 
 	spin_lock(&pool->lock);
@@ -327,7 +327,7 @@ static int sballoc_zpool_malloc(
         spin_unlock(&pool->lock);
         page = alloc_page(gfp);
         if (!page) {
-            return -ENOMEM;
+            return -ENOMEM; // Out of memory
         }
         sbpage = kzalloc(sizeof(struct sballoc_page), gfp);
         if (!sbpage) {
