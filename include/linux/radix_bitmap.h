@@ -33,13 +33,16 @@ struct radix_bitmap_l0 {
 } __attribute__((packed));
 
 struct radix_bitmap {
+    unsigned long size; // In bytes
     struct radix_bitmap_l0 *l0;
 } __attribute__((packed));
 
 /*
  * Initialize the given radix bitmap struct to a valid empty bitmap.
+ *
+ * Returns 0 on success and 1 on failure (which indicates OOM).
  */
-void radix_bitmap_create(struct radix_bitmap *rb, gfp_t gfp);
+bool radix_bitmap_create(struct radix_bitmap *rb, gfp_t gfp);
 
 /*
  * Destroy the given bitmap and free all of its memory.
@@ -53,12 +56,19 @@ bool radix_bitmap_get(struct radix_bitmap *rb, unsigned long idx);
 
 /*
  * Set the given bit.
+ *
+ * Returns 0 on success and 1 on failure (which indicates OOM).
  */
-void radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx, gfp_t gfp);
+bool radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx, gfp_t gfp);
 
 /*
  * Unset the given bit.
  */
 void radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx);
+
+/*
+ * Clear the entire bitmap.
+ */
+void radix_bitmap_clear(struct radix_bitmap *rb);
 
 #endif

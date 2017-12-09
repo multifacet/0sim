@@ -167,6 +167,8 @@ struct zswap_tree {
 
 static struct zswap_tree *zswap_trees[MAX_SWAPFILES];
 
+static struct radix_bitmap zswap_zero_bitmap;
+
 /* RCU-protected iteration */
 static LIST_HEAD(zswap_pools);
 /* protects zswap_pools list modification */
@@ -209,7 +211,21 @@ static void zswap_update_total_size(void)
 
 	rcu_read_unlock();
 
+    total += zswap_zero_bitmap.size;
+
 	zswap_pool_total_size = total;
+}
+
+static bool is_zeroed(struct page *page) {
+    u64 *raw_page = (u64 *) page_address(page);
+    int i;
+    for (i = 0; i < 1 << (PAGE_SHIFT - 3); i++) {
+        if (raw_page[i]) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /*********************************
@@ -966,6 +982,8 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 	char *buf;
 	u8 *src, *dst;
 	struct zswap_header *zhdr;
+    unsigned long page_addr = (unsigned long) page_address(page);
+    bool bitmap_res;
 
 	if (!zswap_enabled || !tree) {
 		ret = -ENODEV;
@@ -981,6 +999,29 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 			goto reject;
 		}
 	}
+
+    /* if the page is all 0s, then we can just insert a bitmap entry */
+    if (is_zeroed(page)) {
+        // Attempt to set a bit
+        spin_lock(&tree->lock);
+        bitmap_res = radix_bitmap_set(&zswap_zero_bitmap, page_addr >> PAGE_SHIFT,
+			   __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM);
+        spin_unlock(&tree->lock);
+
+        // If failed, return nospc
+        if (bitmap_res) {
+            ret = -ENOMEM;
+            goto reject;
+        }
+
+        // Else return success
+        goto success;
+    }
+
+    // remove any entry from bitmap before putting elsewhere
+    spin_lock(&tree->lock);
+    radix_bitmap_unset(&zswap_zero_bitmap, page_addr >> PAGE_SHIFT);
+    spin_unlock(&tree->lock);
 
 	/* allocate entry */
 	entry = zswap_entry_cache_alloc(GFP_KERNEL);
@@ -1047,6 +1088,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 	} while (ret == -EEXIST);
 	spin_unlock(&tree->lock);
 
+success:
 	/* update stats */
 	atomic_inc(&zswap_stored_pages);
 	zswap_update_total_size();
@@ -1075,16 +1117,25 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 	u8 *src, *dst;
 	unsigned int dlen;
 	int ret;
+    bool is_zeroed;
 
 	/* find */
 	spin_lock(&tree->lock);
+    is_zeroed = radix_bitmap_get(&zswap_zero_bitmap, offset >> PAGE_SHIFT);
 	entry = zswap_entry_find_get(&tree->rbroot, offset);
-	if (!entry) {
+	if (!entry && !is_zeroed) {
 		/* entry was written back */
 		spin_unlock(&tree->lock);
 		return -1;
 	}
 	spin_unlock(&tree->lock);
+
+    /* generate a zero page if is_zeroed */
+    if (is_zeroed) {
+        dst = kmap_atomic(page);
+        memset(dst, 0, PAGE_SIZE);
+        return 0;
+    }
 
 	/* decompress */
 	dlen = PAGE_SIZE;
@@ -1113,6 +1164,10 @@ static void zswap_frontswap_invalidate_page(unsigned type, pgoff_t offset)
 
 	/* find */
 	spin_lock(&tree->lock);
+    // Invalidate in the bitmap
+    radix_bitmap_unset(&zswap_zero_bitmap, offset >> PAGE_SHIFT);
+
+    // Then the rb tree
 	entry = zswap_rb_search(&tree->rbroot, offset);
 	if (!entry) {
 		/* entry was written back */
@@ -1138,8 +1193,11 @@ static void zswap_frontswap_invalidate_area(unsigned type)
 	if (!tree)
 		return;
 
-	/* walk the tree and free everything */
 	spin_lock(&tree->lock);
+    // Invalidate the entire bitmap
+    radix_bitmap_clear(&zswap_zero_bitmap);
+
+	/* walk the tree and free everything */
 	rbtree_postorder_for_each_entry_safe(entry, n, &tree->rbroot, rbnode)
 		zswap_free_entry(entry);
 	tree->rbroot = RB_ROOT;
@@ -1229,6 +1287,7 @@ static void __exit zswap_debugfs_exit(void) { }
 static int __init init_zswap(void)
 {
 	struct zswap_pool *pool;
+    bool bitmap_res;
 
 	zswap_init_started = true;
 
@@ -1251,6 +1310,12 @@ static int __init init_zswap(void)
 		zpool_get_type(pool->zpool));
 
 	list_add(&pool->list, &zswap_pools);
+
+    bitmap_res = radix_bitmap_create(&zswap_zero_bitmap, __GFP_RECLAIM);
+    if (bitmap_res) {
+        pr_err("bitmap creation failed\n");
+        goto cache_fail;
+    }
 
 	frontswap_register_ops(&zswap_frontswap_ops);
 	if (zswap_debugfs_init())
