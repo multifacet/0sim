@@ -185,6 +185,8 @@ static bool zswap_init_started;
 	pr_debug("%s pool %s/%s\n", msg, (p)->tfm_name,		\
 		 zpool_get_type((p)->zpool))
 
+#define RADIX_BITMAP_VAL_MASK(val) ((~((1 << (L0_ORDER + L1_ORDER)) - 1)) & (val))
+
 static int zswap_writeback_entry(struct zpool *pool, unsigned long handle);
 static int zswap_pool_get(struct zswap_pool *pool);
 static void zswap_pool_put(struct zswap_pool *pool);
@@ -1004,7 +1006,8 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
     if (is_zeroed(page)) {
         // Attempt to set a bit
         spin_lock(&tree->lock);
-        bitmap_res = radix_bitmap_set(&zswap_zero_bitmap, page_addr >> PAGE_SHIFT,
+        bitmap_res = radix_bitmap_set(&zswap_zero_bitmap,
+               RADIX_BITMAP_VAL_MASK(PFN_DOWN(page_addr)),
 			   __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM);
         spin_unlock(&tree->lock);
 
@@ -1020,7 +1023,8 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 
     // remove any entry from bitmap before putting elsewhere
     spin_lock(&tree->lock);
-    radix_bitmap_unset(&zswap_zero_bitmap, page_addr >> PAGE_SHIFT);
+    radix_bitmap_unset(&zswap_zero_bitmap,
+            RADIX_BITMAP_VAL_MASK(PFN_DOWN(page_addr)));
     spin_unlock(&tree->lock);
 
 	/* allocate entry */
@@ -1121,7 +1125,8 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 
 	/* find */
 	spin_lock(&tree->lock);
-    is_zeroed = radix_bitmap_get(&zswap_zero_bitmap, offset >> PAGE_SHIFT);
+    is_zeroed = radix_bitmap_get(&zswap_zero_bitmap,
+            RADIX_BITMAP_VAL_MASK(PFN_DOWN(offset)));
 	entry = zswap_entry_find_get(&tree->rbroot, offset);
 	if (!entry && !is_zeroed) {
 		/* entry was written back */
@@ -1165,7 +1170,8 @@ static void zswap_frontswap_invalidate_page(unsigned type, pgoff_t offset)
 	/* find */
 	spin_lock(&tree->lock);
     // Invalidate in the bitmap
-    radix_bitmap_unset(&zswap_zero_bitmap, offset >> PAGE_SHIFT);
+    radix_bitmap_unset(&zswap_zero_bitmap,
+            RADIX_BITMAP_VAL_MASK(PFN_DOWN(offset)));
 
     // Then the rb tree
 	entry = zswap_rb_search(&tree->rbroot, offset);
