@@ -1,7 +1,6 @@
 
-#include <linux/gfp.h>
-#include <linux/mm.h>
 #include <linux/radix_bitmap.h>
+#include <linux/vmalloc.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // Various helpers
@@ -17,40 +16,36 @@
  * Allocate and initialize a new empty l0 map.
  */
 struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp) {
-    struct page *pages = alloc_pages(gfp | __GFP_ZERO, L0_SIZE);
-    void *raw_pages;
+    void *pages = vzalloc(L0_SIZE);
     if (!pages) {
         return NULL;
     }
-    raw_pages = page_address(pages);
-    return (struct radix_bitmap_l0 *)raw_pages;
+    return (struct radix_bitmap_l0 *)pages;
 }
 
 /*
  * Allocate and initialize a new empty l1 map.
  */
 struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
-    struct page *pages = alloc_pages(gfp | __GFP_ZERO, L1_SIZE);
-    void *raw_pages;
+    void *pages = vzalloc(L1_SIZE);
     if (!pages) {
         return NULL;
     }
-    raw_pages = page_address(pages);
-    return (struct radix_bitmap_l1 *)raw_pages;
+    return (struct radix_bitmap_l0 *)pages;
 }
 
 /*
  * Deallocate the given l0 map.
  */
 void destroy_radix_bitmap_l0(struct radix_bitmap_l0 *l0) {
-    free_pages((unsigned long)l0, L0_SIZE);
+    vfree((void *)l0);
 }
 
 /*
  * Deallocate the given l1 map.
  */
 void destroy_radix_bitmap_l1(struct radix_bitmap_l1 *l1) {
-    free_pages((unsigned long)l1, L1_SIZE);
+    vfree((void *)l1);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
