@@ -31,7 +31,7 @@ struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
     if (!pages) {
         return NULL;
     }
-    return (struct radix_bitmap_l0 *)pages;
+    return (struct radix_bitmap_l1 *)pages;
 }
 
 /*
