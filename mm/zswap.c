@@ -185,7 +185,7 @@ static bool zswap_init_started;
 	pr_debug("%s pool %s/%s\n", msg, (p)->tfm_name,		\
 		 zpool_get_type((p)->zpool))
 
-#define RADIX_BITMAP_VAL_MASK(val) ((~((1 << (L0_ORDER + L1_ORDER)) - 1)) & (val))
+#define RADIX_BITMAP_VAL_MASK(val) ((~((1ul << (L0_ORDER + L1_ORDER)) - 1)) & (val))
 
 static int zswap_writeback_entry(struct zpool *pool, unsigned long handle);
 static int zswap_pool_get(struct zswap_pool *pool);
