@@ -1,4 +1,5 @@
 
+#include <linux/gfp.h>
 #include <linux/radix_bitmap.h>
 #include <linux/vmalloc.h>
 
@@ -16,7 +17,9 @@
  * Allocate and initialize a new empty l0 map.
  */
 struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp) {
-    void *pages = vzalloc(L0_SIZE);
+    void *pages = __vmalloc(L0_SIZE,
+                            GFP_ATOMIC | __GFP_ZERO,
+                            PAGE_KERNEL);
     if (!pages) {
         return NULL;
     }
@@ -28,7 +31,9 @@ struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp) {
  * Allocate and initialize a new empty l1 map.
  */
 struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
-    void *pages = vzalloc(L1_SIZE);
+    void *pages = __vmalloc(L1_SIZE,
+                            GFP_ATOMIC | __GFP_ZERO,
+                            PAGE_KERNEL);
     if (!pages) {
         return NULL;
     }
