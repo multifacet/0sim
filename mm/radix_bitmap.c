@@ -9,8 +9,8 @@
 #define L0_MASK GENMASK(L0_ORDER + L1_ORDER - 1, L1_ORDER)
 #define L1_MASK GENMASK(L1_ORDER - 1, 0)
 
-#define L0_SIZE (L0_ORDER + 3 - PAGE_SHIFT)
-#define L1_SIZE (L1_ORDER - 3 - PAGE_SHIFT)
+#define L0_SIZE (1 << (L0_ORDER + 3))
+#define L1_SIZE (1 << (L1_ORDER - 3))
 
 /*
  * Allocate and initialize a new empty l0 map.
@@ -20,6 +20,7 @@ struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp) {
     if (!pages) {
         return NULL;
     }
+    printk(KERN_ERR "l0: %p %lx\n", pages, (unsigned long)L0_SIZE);
     return (struct radix_bitmap_l0 *)pages;
 }
 
@@ -31,6 +32,7 @@ struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
     if (!pages) {
         return NULL;
     }
+    printk(KERN_ERR "l1: %p %lx\n", pages, (unsigned long)L1_SIZE);
     return (struct radix_bitmap_l1 *)pages;
 }
 
@@ -92,7 +94,7 @@ void radix_bitmap_destroy(struct radix_bitmap *rb) {
  */
 bool radix_bitmap_get(struct radix_bitmap *rb, unsigned long idx) {
     // Get the l0 and l1 offset
-    unsigned long l0_idx = idx & L0_MASK;
+    unsigned long l0_idx = (idx & L0_MASK) >> L1_ORDER;
     unsigned long l1_idx = idx & L1_MASK;
     struct radix_bitmap_l1 *l1;
 
@@ -103,6 +105,7 @@ bool radix_bitmap_get(struct radix_bitmap *rb, unsigned long idx) {
 
     // Access the l0-th map entry
     l1 = rb->l0->map[l0_idx];
+    printk(KERN_ERR "GET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
 
     // Is there an entry? If not, the bit is unset.
     if (!l1) {
@@ -121,7 +124,7 @@ bool radix_bitmap_get(struct radix_bitmap *rb, unsigned long idx) {
  */
 bool radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx, gfp_t gfp) {
     // Get the l0 and l1 offset
-    unsigned long l0_idx = idx & L0_MASK;
+    unsigned long l0_idx = (idx & L0_MASK) >> L1_ORDER;
     unsigned long l1_idx = idx & L1_MASK;
     struct radix_bitmap_l1 *l1;
 
@@ -132,6 +135,7 @@ bool radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx, gfp_t gfp) {
 
     // Access the l0-th map entry
     l1 = rb->l0->map[l0_idx];
+    printk(KERN_ERR "SET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
 
     // Is there an entry? If not, create one.
     if (!l1) {
@@ -154,7 +158,7 @@ bool radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx, gfp_t gfp) {
  */
 void radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx) {
     // Get the l0 and l1 offset
-    unsigned long l0_idx = idx & L0_MASK;
+    unsigned long l0_idx = (idx & L0_MASK) >> L1_ORDER;
     unsigned long l1_idx = idx & L1_MASK;
     struct radix_bitmap_l1 *l1;
 
@@ -165,6 +169,7 @@ void radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx) {
 
     // Access the l0-th map entry
     l1 = rb->l0->map[l0_idx];
+    printk(KERN_ERR "UNSET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
 
     // Is there an entry? If not, we're done.
     if (!l1) {
