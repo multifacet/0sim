@@ -23,7 +23,7 @@ struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp) {
     if (!pages) {
         return NULL;
     }
-    printk(KERN_ERR "l0: %p %lx\n", pages, (unsigned long)L0_SIZE);
+    //printk(KERN_ERR "l0: %p %lx\n", pages, (unsigned long)L0_SIZE);
     return (struct radix_bitmap_l0 *)pages;
 }
 
@@ -37,7 +37,7 @@ struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
     if (!pages) {
         return NULL;
     }
-    printk(KERN_ERR "l1: %p %lx\n", pages, (unsigned long)L1_SIZE);
+    //printk(KERN_ERR "l1: %p %lx\n", pages, (unsigned long)L1_SIZE);
     return (struct radix_bitmap_l1 *)pages;
 }
 
@@ -110,7 +110,7 @@ bool radix_bitmap_get(struct radix_bitmap *rb, unsigned long idx) {
 
     // Access the l0-th map entry
     l1 = rb->l0->map[l0_idx];
-    printk(KERN_ERR "GET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
+    //printk(KERN_ERR "GET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
 
     // Is there an entry? If not, the bit is unset.
     if (!l1) {
@@ -140,7 +140,7 @@ bool radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx, gfp_t gfp) {
 
     // Access the l0-th map entry
     l1 = rb->l0->map[l0_idx];
-    printk(KERN_ERR "SET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
+    //printk(KERN_ERR "SET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
 
     // Is there an entry? If not, create one.
     if (!l1) {
@@ -174,7 +174,7 @@ void radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx) {
 
     // Access the l0-th map entry
     l1 = rb->l0->map[l0_idx];
-    printk(KERN_ERR "UNSET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
+    //printk(KERN_ERR "UNSET %lx %lx %lx %p\n", idx, l0_idx, l1_idx, l1);
 
     // Is there an entry? If not, we're done.
     if (!l1) {
