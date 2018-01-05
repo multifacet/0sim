@@ -1308,15 +1308,15 @@ static int __init zswap_debugfs_init(void)
 	debugfs_create_u64("compress_64_to_1", S_IRUGO,
 			zswap_debugfs_root, &zswap_compress_64_to_1);
 	debugfs_create_u64("compress_32_to_1", S_IRUGO,
-			zswap_debugfs_root, &zswap_compress_64_to_1);
+			zswap_debugfs_root, &zswap_compress_32_to_1);
 	debugfs_create_u64("compress_16_to_1", S_IRUGO,
-			zswap_debugfs_root, &zswap_compress_64_to_1);
+			zswap_debugfs_root, &zswap_compress_16_to_1);
 	debugfs_create_u64("compress_8_to_1", S_IRUGO,
-			zswap_debugfs_root, &zswap_compress_64_to_1);
+			zswap_debugfs_root, &zswap_compress_8_to_1);
 	debugfs_create_u64("compress_4_to_1", S_IRUGO,
-			zswap_debugfs_root, &zswap_compress_64_to_1);
+			zswap_debugfs_root, &zswap_compress_4_to_1);
 	debugfs_create_u64("compress_2_to_1", S_IRUGO,
-			zswap_debugfs_root, &zswap_compress_64_to_1);
+			zswap_debugfs_root, &zswap_compress_2_to_1);
 
 	return 0;
 }
