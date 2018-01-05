@@ -73,6 +73,18 @@ static u64 zswap_reject_kmemcache_fail;
 /* Duplicate store was encountered (rare) */
 static u64 zswap_duplicate_entry;
 
+/*
+ * Keep track of stats on how compressible things are
+ */
+static u64 zswap_compress_zeros;     // All zeros!
+static u64 zswap_compress_a_lot; // >= 1B
+static u64 zswap_compress_64_to_1; // >= 64B
+static u64 zswap_compress_32_to_1; // >= 128B
+static u64 zswap_compress_16_to_1; // >= 256B
+static u64 zswap_compress_8_to_1; // >= 512B
+static u64 zswap_compress_4_to_1; // >= 1KB
+static u64 zswap_compress_2_to_1; // >= 2KB
+
 /*********************************
 * tunables
 **********************************/
@@ -1018,6 +1030,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
         }
 
         // Else return success
+        zswap_compress_zeros++;
         goto success;
     }
 
@@ -1078,6 +1091,23 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 	entry->offset = offset;
 	entry->handle = handle;
 	entry->length = dlen;
+
+    /* update stats */
+    if (entry->length >= PAGE_SIZE >> 1) {
+        zswap_compress_2_to_1++;
+    } else if (entry->length >= PAGE_SIZE >> 2) {
+        zswap_compress_4_to_1++;
+    } else if (entry->length >= PAGE_SIZE >> 3) {
+        zswap_compress_8_to_1++;
+    } else if (entry->length >= PAGE_SIZE >> 4) {
+        zswap_compress_16_to_1++;
+    } else if (entry->length >= PAGE_SIZE >> 5) {
+        zswap_compress_32_to_1++;
+    } else if (entry->length >= PAGE_SIZE >> 6) {
+        zswap_compress_64_to_1++;
+    } else {
+        zswap_compress_a_lot++;
+    }
 
 	/* map */
 	spin_lock(&tree->lock);
@@ -1270,6 +1300,23 @@ static int __init zswap_debugfs_init(void)
 			zswap_debugfs_root, &zswap_pool_total_size);
 	debugfs_create_atomic_t("stored_pages", S_IRUGO,
 			zswap_debugfs_root, &zswap_stored_pages);
+
+	debugfs_create_u64("compress_zeros", S_IRUGO,
+			zswap_debugfs_root, &zswap_compress_zeros);
+	debugfs_create_u64("compress_a_lot", S_IRUGO,
+			zswap_debugfs_root, &zswap_compress_a_lot);
+	debugfs_create_u64("compress_64_to_1", S_IRUGO,
+			zswap_debugfs_root, &zswap_compress_64_to_1);
+	debugfs_create_u64("compress_32_to_1", S_IRUGO,
+			zswap_debugfs_root, &zswap_compress_64_to_1);
+	debugfs_create_u64("compress_16_to_1", S_IRUGO,
+			zswap_debugfs_root, &zswap_compress_64_to_1);
+	debugfs_create_u64("compress_8_to_1", S_IRUGO,
+			zswap_debugfs_root, &zswap_compress_64_to_1);
+	debugfs_create_u64("compress_4_to_1", S_IRUGO,
+			zswap_debugfs_root, &zswap_compress_64_to_1);
+	debugfs_create_u64("compress_2_to_1", S_IRUGO,
+			zswap_debugfs_root, &zswap_compress_64_to_1);
 
 	return 0;
 }
