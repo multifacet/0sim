@@ -875,7 +875,7 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 	};
     bool is_zeroed;
 
-    return -ENOMEM; // TODO(markm): remove this
+    //return -ENOMEM; // TODO(markm): remove this
 
 	/* extract swpentry from data */
 	zhdr = zpool_map_handle(pool, handle, ZPOOL_MM_RO);
@@ -896,7 +896,7 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 	}
 	BUG_ON(offset != entry->offset && !is_zeroed);
 
-    // FIXME: see below... for now just fail eviction
+    // FIXME(markm): see below... for now just fail eviction
     if (is_zeroed) {
         return -ENOMEM;
     }
