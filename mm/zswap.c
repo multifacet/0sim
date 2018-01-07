@@ -230,8 +230,8 @@ static void zswap_update_total_size(void)
 	zswap_pool_total_size = total;
 }
 
-static bool is_zeroed(struct page *page) {
-    u64 *raw_page = (u64 *) page_address(page);
+static bool is_zeroed(u8 *page) {
+    u64 *raw_page = (u64 *) page;
     int i;
     for (i = 0; i < 1 << (PAGE_SHIFT - 3); i++) {
         if (raw_page[i]) {
@@ -875,6 +875,8 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 	};
     bool is_zeroed;
 
+    return -ENOMEM; // TODO(markm): remove this
+
 	/* extract swpentry from data */
 	zhdr = zpool_map_handle(pool, handle, ZPOOL_MM_RO);
 	swpentry = zhdr->swpentry; /* here */
@@ -885,7 +887,7 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 	/* find and ref zswap entry */
 	spin_lock(&tree->lock);
     is_zeroed = radix_bitmap_get(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(PFN_DOWN(offset)));
+            RADIX_BITMAP_VAL_MASK(offset));
 	entry = zswap_entry_find_get(&tree->rbroot, offset);
     spin_unlock(&tree->lock);
 	if (!entry && !is_zeroed) {
@@ -893,6 +895,11 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 		return 0;
 	}
 	BUG_ON(offset != entry->offset && !is_zeroed);
+
+    // FIXME: see below... for now just fail eviction
+    if (is_zeroed) {
+        return -ENOMEM;
+    }
 
 	/* try to allocate swap cache page */
 	switch (zswap_get_swap_cache_page(swpentry, &page)) {
@@ -949,7 +956,7 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 	/* drop local reference */
     if (is_zeroed) {
         radix_bitmap_unset(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(PFN_DOWN(offset)));
+            RADIX_BITMAP_VAL_MASK(offset));
     } else {
         zswap_entry_put(tree, entry);
 
@@ -1018,7 +1025,6 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 	char *buf;
 	u8 *src, *dst;
 	struct zswap_header *zhdr;
-    unsigned long page_addr = (unsigned long) page_address(page);
     bool bitmap_res;
 
 	if (!zswap_enabled || !tree) {
@@ -1037,13 +1043,27 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 	}
 
     /* if the page is all 0s, then we can just insert a bitmap entry */
-    if (is_zeroed(page)) {
-        // Attempt to set a bit
+	src = kmap_atomic(page);
+    if (is_zeroed(src)) {
         spin_lock(&tree->lock);
+
+        // May need to remove an entry from the tree
+        entry = zswap_rb_search(&tree->rbroot, offset);
+        if (entry) {
+            /* remove from rbtree */
+            zswap_rb_erase(&tree->rbroot, entry);
+
+            /* drop the initial reference from entry creation */
+            zswap_entry_put(tree, entry);
+        }
+
+        // Set a bit in the bitmap
         bitmap_res = radix_bitmap_set(&zswap_zero_bitmap,
-               RADIX_BITMAP_VAL_MASK(PFN_DOWN(page_addr)),
+               RADIX_BITMAP_VAL_MASK(offset),
 			   __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM);
         spin_unlock(&tree->lock);
+
+        kunmap_atomic(src);
 
         // If failed, return nospc
         if (bitmap_res) {
@@ -1060,7 +1080,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
     // remove any entry from bitmap before putting elsewhere
     spin_lock(&tree->lock);
     radix_bitmap_unset(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(PFN_DOWN(page_addr)));
+            RADIX_BITMAP_VAL_MASK(offset));
     spin_unlock(&tree->lock);
 
 	/* allocate entry */
@@ -1081,7 +1101,6 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 	/* compress */
 	dst = get_cpu_var(zswap_dstmem);
 	tfm = *get_cpu_ptr(entry->pool->tfm);
-	src = kmap_atomic(page);
 	ret = crypto_comp_compress(tfm, src, PAGE_SIZE, dst, &dlen);
 	kunmap_atomic(src);
 	put_cpu_ptr(entry->pool->tfm);
@@ -1179,7 +1198,7 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 	/* find */
 	spin_lock(&tree->lock);
     is_zeroed = radix_bitmap_get(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(PFN_DOWN(offset)));
+            RADIX_BITMAP_VAL_MASK(offset));
 	entry = zswap_entry_find_get(&tree->rbroot, offset);
     spin_unlock(&tree->lock);
 	if (!entry && !is_zeroed) {
@@ -1187,10 +1206,14 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 		return -1;
 	}
 
+    dst = kmap_atomic(page);
+
     /* generate a zero page if is_zeroed */
     if (is_zeroed) {
-        dst = kmap_atomic(page);
+        BUG_ON(entry);
+
         memset(dst, 0, PAGE_SIZE);
+        kunmap_atomic(dst);
         return 0;
     }
 
@@ -1198,7 +1221,6 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 	dlen = PAGE_SIZE;
 	src = (u8 *)zpool_map_handle(entry->pool->zpool, entry->handle,
 			ZPOOL_MM_RO) + sizeof(struct zswap_header);
-	dst = kmap_atomic(page);
 	tfm = *get_cpu_ptr(entry->pool->tfm);
 	ret = crypto_comp_decompress(tfm, src, entry->length, dst, &dlen);
 	put_cpu_ptr(entry->pool->tfm);
@@ -1223,7 +1245,7 @@ static void zswap_frontswap_invalidate_page(unsigned type, pgoff_t offset)
 	spin_lock(&tree->lock);
     // Invalidate in the bitmap
     radix_bitmap_unset(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(PFN_DOWN(offset)));
+            RADIX_BITMAP_VAL_MASK(offset));
 
     // Then the rb tree
 	entry = zswap_rb_search(&tree->rbroot, offset);
@@ -1253,6 +1275,8 @@ static void zswap_frontswap_invalidate_area(unsigned type)
 
 	spin_lock(&tree->lock);
     // Invalidate the entire bitmap
+    // FIXME: we should really do this per-swapfile but for now,
+    // we assume there is only one...
     radix_bitmap_clear(&zswap_zero_bitmap);
 
 	/* walk the tree and free everything */
