@@ -287,8 +287,6 @@ static void ztier_rb_insert(struct rb_root *tree, struct ztier_chunk *new_chunk)
         }
     }
 
-    BUG_ON(!parent);
-
     // Put the new node there
     rb_link_node(&new_chunk->node, parent, link);
     rb_insert_color(&new_chunk->node, tree);
@@ -311,6 +309,7 @@ static void ztier_rb_move_range(struct rb_root *from,
 
         // Remove from old tree and add to new tree
         rb_erase(node, from);
+        RB_CLEAR_NODE(node);
         if (to) {
             ztier_rb_insert(to, chunk);
         }
@@ -340,6 +339,7 @@ static void ztier_init_page(struct rb_root *tree,
     // Break into chunks and insert to tree
     for (i = 0; i < PAGE_SIZE; i += TIER_SIZES[tier]) {
         chunk = (struct ztier_chunk *)&raw_page[i];
+        RB_CLEAR_NODE(&chunk->node);
         ztier_rb_insert(tree, chunk);
     }
 }
@@ -690,6 +690,9 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
         free = rb_first(tree);
     }
 
+    rb_erase(free, tree);
+    RB_CLEAR_NODE(free);
+
     BUG_ON(!free);
 
     spin_unlock(&pool->lock);
@@ -730,6 +733,8 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
 
     // Sanity check: make sure the alignment of the given handle makes sense
     BUG_ON(handle % TIER_SIZES[tier] != 0);
+
+    RB_CLEAR_NODE(&chunk->node);
 
     spin_lock(&pool->lock);
 
