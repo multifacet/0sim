@@ -527,7 +527,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
             spin_unlock(&pool->lock);
 
             // Attempt to evict it
-			ret = pool->ops->evict(pool, handle);
+            ret = pool->ops->evict(pool, handle);
             if (ret) {
                 return;
             }
@@ -835,7 +835,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         return -EINVAL;
     }
 
-    while (retries--) {
+    while (retries-- > 0) {
         // Select a victim page by taking the last chunk from the largest tier
         // with pages.
         //
@@ -843,6 +843,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         // means trying to evict fewer pages -> less I/O).
         page = ztier_reclaim_select_page(pool, &current_tier, &current_addr);
         if (!page) {
+            spin_unlock(&pool->lock);
             return -EAGAIN;
         }
 
@@ -863,7 +864,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         // if all chunks of the selected page are now in under_reclaim, remove
         // the chunks from under_reclaim, free the page, and return sucess
         if (ztier_page_chunks_reclaimed(pool, page)) {
-			spin_unlock(&pool->lock);
+            spin_unlock(&pool->lock);
             return 0;
         }
 
