@@ -381,6 +381,10 @@ static void ztier_free_all(struct ztier_pool *pool) {
             page = virt_to_page(page_start);
             page->private = 0;
             __free_page(page);
+
+            // Update size
+            BUG_ON(pool->size < PAGE_SIZE);
+            pool->size -= PAGE_SIZE;
         }
     }
 }
@@ -685,6 +689,9 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
 
         // split into chunks, adding each chunk to the tree
         ztier_init_page(tree, page, tier);
+
+        // Update size
+        pool->size += PAGE_SIZE;
 
         // then retry removing the first chunk
         free = rb_first(tree);
