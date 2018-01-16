@@ -50,6 +50,11 @@ bool radix_bitmap_create(struct radix_bitmap *rb, gfp_t gfp);
 void radix_bitmap_destroy(struct radix_bitmap *rb);
 
 /*
+ * Allocate an L1 bitmap.
+ */
+struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp);
+
+/*
  * Returns the bit.
  */
 bool radix_bitmap_get(struct radix_bitmap *rb, unsigned long idx);
@@ -57,9 +62,16 @@ bool radix_bitmap_get(struct radix_bitmap *rb, unsigned long idx);
 /*
  * Set the given bit.
  *
- * Returns 0 on success and 1 on failure (which indicates OOM).
+ * If the L1 bitmap containing the given bit does not exist and no
+ * new_l1 bitmap has been passed, then fail.
+ *
+ * NOTE: once new_l1 is passed, it is the data structure's responsibility to
+ * call free. `new_l1` should be a pointer returned by `mk_radix_bitmap_l1`.
+ *
+ * Returns 0 on success and -ENOMEM on failure (which indicates no L1).
  */
-bool radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx, gfp_t gfp);
+int radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx,
+                     struct radix_bitmap_l1 *new_l1);
 
 /*
  * Unset the given bit.
