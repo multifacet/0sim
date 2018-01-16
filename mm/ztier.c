@@ -66,6 +66,11 @@ struct ztier_pool {
     // find pages that are completely unused.
     struct rb_root free_lists[NUM_TIERS];
 
+    // Keep track of the pages allocated so that we can reclaim if needed.
+    // This is done by linking together all of the pages via the `lru` field
+    // in the struct page. The pages for each tier are kept separate.
+    struct list_head used_pages[NUM_TIERS];
+
     // A set of chunks whose pages are under reclamation. These chunks are
     // not available for allocation.
     struct rb_root under_reclaim;
@@ -325,16 +330,20 @@ static void ztier_rb_move_range(struct rb_root *from,
  * Moreover, record what size of chunk the page was broken into using the
  * `private` field of the struct page.
  */
-static void ztier_init_page(struct rb_root *tree,
+static void ztier_init_page(struct ztier_pool *pool,
                             struct page *page,
                             const int tier)
 {
     u8 *raw_page = page_address(page);
+    struct rb_root *tree = &pool->free_lists[tier];
     struct ztier_chunk *chunk;
     int i;
 
     // Record the size of the chunks of the page and unset the RECLAIM_FLAG
     page->private = tier;
+
+    // Insert into list of pages
+    list_add(&page->lru, &pool->used_pages[tier]);
 
     // Break into chunks and insert to tree
     for (i = 0; i < PAGE_SIZE; i += TIER_SIZES[tier]) {
@@ -350,7 +359,7 @@ static bool ztier_all_tiers_empty(struct ztier_pool *pool)
     int i;
 
     for (i = 0; i < NUM_TIERS; i++) {
-        if (rb_last(&pool->free_lists[i])) {
+        if (!list_empty(&pool->used_pages[i])) {
             return false;
         }
     }
@@ -358,7 +367,9 @@ static bool ztier_all_tiers_empty(struct ztier_pool *pool)
     return true;
 }
 
-/* Free all memory in all tiers in the given pool */
+/* Free all memory in all tiers in the given pool. Assumes that the
+ * pool is empty.
+ */
 static void ztier_free_all(struct ztier_pool *pool) {
     unsigned long chunk, page_start, page_end;
     struct page *page;
@@ -379,6 +390,7 @@ static void ztier_free_all(struct ztier_pool *pool) {
 
             // Free the page
             page = virt_to_page(page_start);
+            list_del(&page->lru);
             page->private = 0;
             __free_page(page);
 
@@ -389,36 +401,12 @@ static void ztier_free_all(struct ztier_pool *pool) {
     }
 }
 
-/* Helper for ztier_reclaim_select_page */
-static unsigned long ztier_reclaim_select_page_in_tier(struct ztier_pool *pool,
-                                                      int *current_tier,
-                                                      unsigned long *current_addr)
-{
-    struct rb_root *tree = &pool->free_lists[*current_tier];
-    struct rb_node *chunk = ztier_rb_floor(tree, (struct ztier_chunk *)*current_addr);
-    unsigned long addr = 0;
-
-    while (chunk) {
-        chunk = rb_prev(chunk);
-
-        if (chunk) {
-            addr = (unsigned long)rb_entry(chunk, struct ztier_chunk, node);
-        }
-
-        if (addr < ((*current_addr) - PAGE_SIZE)) {
-            break;
-        }
-    }
-
-    return addr;
-}
-
 /* Select a page to attempt to reclaim from the given pool. This is a stateful
  * routine that keeps track of what pages it has previously selected via the
- * current_tier and current_addr pointers.
+ * current_tier and current_page pointers.
  *
  * @current_tier a pointer to state that says what tier we have gotten to so far.
- * @current_addr a pointer to the latest address in current_tier we have checked.
+ * @current_page a pointer to the latest page in current_tier we have tried.
  *
  * Caller should already hold lock.
  *
@@ -426,39 +414,31 @@ static unsigned long ztier_reclaim_select_page_in_tier(struct ztier_pool *pool,
  */
 static struct page *ztier_reclaim_select_page(struct ztier_pool *pool,
                                               int *current_tier,
-                                              unsigned long *current_addr)
+                                              struct page **current_page)
 {
-    struct rb_node *chunk_node;
-    unsigned long chunk;
-
     // For each tier starting with *current_tier
     while (*current_tier < NUM_TIERS) {
-        // If *current_addr is NULL, then return the last chunk in the tier.
-        // If the tier is empty move to the next tier and try again.
-        if (!current_addr) {
-            chunk_node = rb_last(&pool->free_lists[*current_tier]);
-            if (!chunk_node) {
+        // If *current_page is NULL, then return the last page in the tier.
+        if (!*current_page) {
+            if (list_empty(&pool->used_pages[*current_tier])) {
+                // If the tier is empty move to the next tier and try again.
                 (*current_tier)++;
-                continue;
+            } else {
+                *current_page = list_last_entry(&pool->used_pages[*current_tier],
+                                                struct page,
+                                                lru);
             }
-            chunk = (unsigned long)rb_entry(chunk_node, struct ztier_chunk, node);
         }
-        // Otherwise, find the first chunk in the same page as current
-        // *current_addr. Move backward in the tree until either we reach the
-        // beginning of the free list or we reach a chunk in a different page.
+        // Otherwise, move backward in the list of used pages until either we
+        // reach the beginning of the list.
         else {
-            chunk = ztier_reclaim_select_page_in_tier(pool, current_tier, current_addr);
+            if ((*current_page)->lru.prev == &pool->used_pages[*current_tier]) {
+                // Reached the beginning of the list; move to next tier
+                (*current_tier)++;
+            } else {
+                return *current_page = list_prev_entry(*current_page, lru);
+            }
         }
-
-        // If we reach the beginning of the free list, move to the next tier
-        // and try again.
-        if (!chunk) {
-            (*current_tier)++;
-            continue;
-        }
-
-        // Otherwise, return the found page.
-        return virt_to_page((*current_addr) = chunk & PAGE_MASK);
     }
 
     // Nothing was found...
@@ -556,7 +536,7 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
     // for each chunk in the page, if that chunk is not in under_reclaim,
     // return false. Otherwise, proceed.
     for (i = 0; i < PAGE_SIZE; i += TIER_SIZES[tier]) {
-        if (!ztier_rb_contains(&pool->free_lists[tier],
+        if (!ztier_rb_contains(&pool->under_reclaim,
                                (struct ztier_chunk *) (vaddr + i)))
         {
             return 1;
@@ -568,6 +548,9 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
                         NULL,
                         (struct ztier_chunk *)vaddr,
                         (struct ztier_chunk *)vaddr + PAGE_SIZE);
+
+    // Remove the page from the LRU list
+    list_del(&page->lru);
 
     // Free the page
     page->private = 0;
@@ -603,6 +586,7 @@ struct ztier_pool *ztier_create_pool(gfp_t gfp, const struct ztier_ops *ops)
     spin_lock_init(&pool->lock);
     for (i = 0; i < NUM_TIERS; i++) {
         pool->free_lists[i] = RB_ROOT;
+        INIT_LIST_HEAD(&pool->used_pages[i]);
     }
     pool->under_reclaim = RB_ROOT;
     pool->size = 0;
@@ -688,7 +672,7 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
         }
 
         // split into chunks, adding each chunk to the tree
-        ztier_init_page(tree, page, tier);
+        ztier_init_page(pool, page, tier);
 
         // Update size
         pool->size += PAGE_SIZE;
@@ -822,7 +806,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
 
     // Keep track of the last tier and chunk address tried
     int current_tier = 0;
-    unsigned long current_addr = (unsigned long)-1l;
+    struct page *current_page = NULL;
 
     spin_lock(&pool->lock);
 
@@ -841,7 +825,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         //
         // We start with larger tiers (e.g 2KB as opposed to 256B because this
         // means trying to evict fewer pages -> less I/O).
-        page = ztier_reclaim_select_page(pool, &current_tier, &current_addr);
+        page = ztier_reclaim_select_page(pool, &current_tier, &current_page);
         if (!page) {
             spin_unlock(&pool->lock);
             return -EAGAIN;
