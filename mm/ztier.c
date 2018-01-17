@@ -495,6 +495,8 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
     int i;
     int ret;
 
+    BUG_ON(!page);
+
     spin_lock(&pool->lock);
 
     // For each chunk in the page
@@ -505,6 +507,8 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
         if (!ztier_rb_contains(&pool->under_reclaim, (struct ztier_chunk *) handle))
         {
             spin_unlock(&pool->lock);
+
+            BUG_ON(handle % TIER_SIZES[tier] != 0);
 
             // Attempt to evict it
             ret = pool->ops->evict(pool, handle);
@@ -549,10 +553,9 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
                         (struct ztier_chunk *)vaddr,
                         (struct ztier_chunk *)vaddr + PAGE_SIZE);
 
-    // Remove the page from the LRU list
-    list_del(&page->lru);
-
-    // Free the page
+    // Free the page...
+    //
+    // NOTE: the page is already removed from the lru list by ztier_reclaim_page
     page->private = 0;
     __free_page(page);
 
@@ -689,7 +692,7 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
     spin_unlock(&pool->lock);
 
     // return the allocation
-    *handle = (unsigned long)free;
+    *handle = (unsigned long)rb_entry(free, struct ztier_chunk, node);
     return 0;
 }
 
@@ -800,7 +803,7 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
  * no pages to evict or an eviction handler is not registered, -EAGAIN if
  * the retry limit was hit.
  */
-int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
+int __attribute__((optimize("O0"))) ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
 {
     struct page *page;
 
@@ -834,6 +837,9 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         // set the RECLAIM_FLAG on the page
         page->private |= RECLAIM_FLAG;
 
+        // Remove from list so that we don't try to evict it again concurrently
+        list_del(&page->lru);
+
         // move all free chunks of the page from the free list to under_reclaim
         ztier_page_chunks_under_reclaim(pool, page);
 
@@ -847,13 +853,14 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
 
         // if all chunks of the selected page are now in under_reclaim, remove
         // the chunks from under_reclaim, free the page, and return sucess
-        if (ztier_page_chunks_reclaimed(pool, page)) {
+        if (!ztier_page_chunks_reclaimed(pool, page)) {
             spin_unlock(&pool->lock);
             return 0;
         }
 
         // otherwise, replace all of the chunks from that page to the
         // appropriate free list again.
+        list_add(&page->lru, &pool->used_pages[current_tier]);
         ztier_page_chunks_from_under_reclaim(pool, page);
     }
 
