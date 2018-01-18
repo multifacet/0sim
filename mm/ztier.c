@@ -28,6 +28,7 @@
 #include <linux/rbtree.h>
 #include <linux/ztier.h>
 #include <linux/zpool.h>
+#include <linux/poison.h>
 
 // Some useful constants
 enum TIERS {
@@ -306,11 +307,14 @@ static void ztier_rb_move_range(struct rb_root *from,
                                 struct ztier_chunk *after)
 {
     struct rb_node *node = ztier_rb_ceil(from, start);
+    struct rb_node *next;
     struct ztier_chunk *chunk;
 
     while (node) {
         chunk = rb_entry(node, struct ztier_chunk, node);
         if (chunk >= after) return;
+
+        next = rb_next(node);
 
         // Remove from old tree and add to new tree
         rb_erase(node, from);
@@ -320,7 +324,7 @@ static void ztier_rb_move_range(struct rb_root *from,
         }
 
         // Go to next node
-        node = rb_next(node);
+        node = next;
     }
 }
 
@@ -377,6 +381,8 @@ static void ztier_free_all(struct ztier_pool *pool) {
     struct page *page;
     struct rb_node *next;
     int i;
+
+    // TODO(markm): probably want to rewrite this in terms of used_pages
 
     for (i = 0; i < NUM_TIERS; i++) {
         while ((next = rb_first(&pool->free_lists[i]))) {
@@ -527,8 +533,8 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
 
 /*
  * If all chunks of the selected page are now in under_reclaim, remove the
- * chunks from under_reclaim, free the page, and return 0. Otherwise, return 1
- * and do nothing.
+ * chunks from under_reclaim, free the page, and return true. Otherwise, return
+ * false and do nothing.
  *
  * Caller should already hold lock.
  */
@@ -545,7 +551,7 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
         if (!ztier_rb_contains(&pool->under_reclaim,
                                (struct ztier_chunk *) (vaddr + i)))
         {
-            return 1;
+            return false;
         }
     }
 
@@ -565,7 +571,7 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
     BUG_ON(pool->size < PAGE_SIZE);
     pool->size -= PAGE_SIZE;
 
-    return 0;
+    return true;
 }
 
 /*****************
@@ -654,7 +660,7 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
         return -ENOSPC;
 
     // choose the appropriate tree
-    for (tier = 0; tier < NUM_TIERS; tier++) {
+    for (tier = NUM_TIERS - 1; tier >= 0; tier--) {
         if (size <= TIER_SIZES[tier]) {
             tree = &pool->free_lists[tier];
             break;
@@ -675,6 +681,9 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
             spin_unlock(&pool->lock);
             return -ENOMEM;
         }
+
+        BUG_ON(page->lru.next != LIST_POISON1);
+        BUG_ON(page->lru.prev != LIST_POISON2);
 
         // split into chunks, adding each chunk to the tree
         ztier_init_page(pool, page, tier);
@@ -825,6 +834,8 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
     }
 
     while (retries-- > 0) {
+        BUG_ON(current_tier >= NUM_TIERS);
+
         // Select a victim page by taking the last chunk from the largest tier
         // with pages.
         //
@@ -840,7 +851,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         page->private |= RECLAIM_FLAG;
 
         // Remove from list so that we don't try to evict it again concurrently
-        list_del_init(&page->lru);
+        list_del(&page->lru);
 
         // move all free chunks of the page from the free list to under_reclaim
         ztier_page_chunks_under_reclaim(pool, page);
@@ -855,7 +866,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
 
         // if all chunks of the selected page are now in under_reclaim, remove
         // the chunks from under_reclaim, free the page, and return sucess
-        if (!ztier_page_chunks_reclaimed(pool, page)) {
+        if (ztier_page_chunks_reclaimed(pool, page)) {
             spin_unlock(&pool->lock);
             return 0;
         }
