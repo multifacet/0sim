@@ -339,6 +339,8 @@ static void ztier_init_page(struct ztier_pool *pool,
     struct ztier_chunk *chunk;
     int i;
 
+    BUG_ON(!raw_page);
+
     // Record the size of the chunks of the page and unset the RECLAIM_FLAG
     page->private = tier;
 
@@ -684,10 +686,10 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
         free = rb_first(tree);
     }
 
+    BUG_ON(!free);
+
     rb_erase(free, tree);
     RB_CLEAR_NODE(free);
-
-    BUG_ON(!free);
 
     spin_unlock(&pool->lock);
 
@@ -803,7 +805,7 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
  * no pages to evict or an eviction handler is not registered, -EAGAIN if
  * the retry limit was hit.
  */
-int __attribute__((optimize("O0"))) ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
+int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
 {
     struct page *page;
 
@@ -838,7 +840,7 @@ int __attribute__((optimize("O0"))) ztier_reclaim_page(struct ztier_pool *pool, 
         page->private |= RECLAIM_FLAG;
 
         // Remove from list so that we don't try to evict it again concurrently
-        list_del(&page->lru);
+        list_del_init(&page->lru);
 
         // move all free chunks of the page from the free list to under_reclaim
         ztier_page_chunks_under_reclaim(pool, page);
@@ -861,6 +863,7 @@ int __attribute__((optimize("O0"))) ztier_reclaim_page(struct ztier_pool *pool, 
         // otherwise, replace all of the chunks from that page to the
         // appropriate free list again.
         list_add(&page->lru, &pool->used_pages[current_tier]);
+        page->private = current_tier;
         ztier_page_chunks_from_under_reclaim(pool, page);
     }
 
