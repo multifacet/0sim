@@ -377,18 +377,15 @@ static bool ztier_all_tiers_empty(struct ztier_pool *pool)
  * pool is empty.
  */
 static void ztier_free_all(struct ztier_pool *pool) {
-    unsigned long chunk, page_start, page_end;
+    unsigned long page_start, page_end;
     struct page *page;
-    struct rb_node *next;
     int i;
 
-    // TODO(markm): probably want to rewrite this in terms of used_pages
-
     for (i = 0; i < NUM_TIERS; i++) {
-        while ((next = rb_first(&pool->free_lists[i]))) {
-            chunk = (unsigned long)rb_entry(next, struct ztier_chunk, node);
-            page_start = chunk & PAGE_MASK;
-            page_end = chunk + PAGE_SIZE;
+        while (!list_empty(&pool->used_pages[i])) {
+            page = list_first_entry(&pool->used_pages[i], struct page, lru);
+            page_start = (unsigned long)page_address(page);
+            page_end = page_start + PAGE_SIZE;
 
             // Remove all chunks
             ztier_rb_move_range(&pool->free_lists[i],
@@ -397,9 +394,8 @@ static void ztier_free_all(struct ztier_pool *pool) {
                                 (struct ztier_chunk *)page_end);
 
             // Free the page
-            page = virt_to_page(page_start);
             list_del(&page->lru);
-            page->private = 0;
+            page->private = 0xDEADBEEF;
             __free_page(page);
 
             // Update size
