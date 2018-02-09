@@ -507,10 +507,10 @@ static unsigned long scan_swap_map(struct swap_info_struct *si,
 	scan_base = offset = si->cluster_next;
 
 	/* SSD algorithm */
-	if (si->cluster_info) {
+	//if (si->cluster_info) {
 		scan_swap_map_try_ssd_cluster(si, &offset, &scan_base);
 		goto checks;
-	}
+	//}
 
 	if (unlikely(!si->cluster_nr--)) {
 		if (si->pages - si->inuse_pages < SWAPFILE_CLUSTER) {
