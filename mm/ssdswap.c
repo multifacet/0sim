@@ -1,21 +1,17 @@
 /*
- * This module defines a block device which makes another device look like a
- * SSD. This is not a filter deive (i.e. miscdevice) but a full-blown
- * block_device.
+ * A misc device which makes another device look like a non-rotational device.
  *
- * The device to mask is configurable via sysfs and should not be mounted or in
- * use while this device is being configured or used! (Otherwise, you could get
- * weird results)...
- *
- * The device is configured by writing the path of the masked device to
- * /sys/module/ssdswap/device. To unset the masked device, write an empty
- * string.
+ * After loading this module, the sysfs can be used to choose a disk to make
+ * non-rotational if it is not already The other device should not be mounted
+ * or in use while this device is being configured or used! (Otherwise, you
+ * could get weird results)...  The device is configured by writing the path of
+ * the masked device to /sys/module/ssdswap/device. To unset the masked device,
+ * write an empty string.
  */
 
 #include <linux/module.h>
-#include <linux/fs.h>
 #include <linux/blkdev.h>
-#include <linux/genhd.h>
+#include <linux/miscdevice.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 // Module parameters
@@ -36,21 +32,21 @@ module_param_cb(device, &device_param_ops, &device_path, 0644);
 // Masking and unmasking another device
 ////////////////////////////////////////////////////////////////////////////////
 
-// This device (the mask)
-static struct block_device ssdswap_dev;
+// This device
+static struct miscdevice ssdswap_dev;
 
 // The block device we are filtering
 static struct block_device *blkdev;
 
-// A nop make_request_fn
-static void no_mrf(struct request_queue *q, struct bio *bio) {
-    // Do nothing...
-}
+// The value of the QUEUE_NONROT flag before we fiddled with it.
+static bool original_nonrot_flag;
 
 // Unset the current device if there is one. This operation is idempotent.
 static void unset_device(void) {
     if (blkdev) {
-        ssdswap_dev.bd_disk->queue->make_request_fn = no_mrf;
+        if (!original_nonrot_flag) {
+            queue_flag_clear_unlocked(QUEUE_FLAG_NONROT, bdev_get_queue(blkdev));
+        }
         blkdev = NULL;
     }
 
@@ -69,15 +65,18 @@ static int set_device(const char *path)
     BUG_ON(blkdev);
 
     // Set the new device (if provided)
-    if (strlen(path)) { //strlen ok b/c we trust the kernel
+    if (strlen(path)) { // strlen ok because we trust the kernel
         blkdev = lookup_bdev(path);
         if (IS_ERR(blkdev))     {
             printk ("No such block device.\n");
             return -EINVAL;
         }
 
-        ssdswap_dev.bd_disk->queue->make_request_fn =
-            blkdev->bd_disk->queue->make_request_fn;
+        // Save the original value of the flag
+        original_nonrot_flag = blk_queue_nonrot(bdev_get_queue(blkdev));
+
+        // Then set it
+        queue_flag_set_unlocked(QUEUE_FLAG_NONROT, bdev_get_queue(blkdev));
     }
 
     return 0;
@@ -90,28 +89,23 @@ static int device_param_set(const char *val, const struct kernel_param *kp)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Block device driver
-////////////////////////////////////////////////////////////////////////////////
-
-// TODO: mask_req_fn should dispatch to the appropriate request fn of the masked dev
-
-////////////////////////////////////////////////////////////////////////////////
 // Module init
 ////////////////////////////////////////////////////////////////////////////////
 
 static int __init filter_init(void)
 {
+    int err;
+
+    ssdswap_dev.minor = MISC_DYNAMIC_MINOR;
+    ssdswap_dev.name = "ssdswap";
+
+    err = misc_register(&ssdswap_dev);
+
+    if (err) {
+        return err;
+    }
+
     printk(KERN_INFO "ssdswap on");
-
-    // TODO: register a block device
-    int err = register_blkdev(major, "ssdswap", bdops);
-
-    // TODO: init the queue with the proper request_fn_proc
-    blk_init_queue(BLK_DEFAULT_QUEUE(major), mask_req_fn);
-
-    // TODO: should set NONROT flag to convince swap system to do easy clustering
-
-    if (err) { return err; }
 
     return 0;
 }
@@ -120,10 +114,7 @@ static void __exit filter_exit(void)
 {
     unset_device();
 
-    // TODO: unregister the block device
-    int err = unregister_blkdev(major, "ssdswap");
-
-    blk_cleanup_queue(BLK_DEFAULT_QUEUE(major));
+    misc_deregister(&ssdswap_dev);
 
     printk(KERN_INFO "ssdswap off");
 }
