@@ -575,6 +575,22 @@ config ZTIER
 	  page.  It attempts to retain the simplicity and deteminism of zbud,
 	  while achieving higher density.
 
+config SSDSWAP
+    tristate "A block device which makes another device look like a SSD"
+    default n
+    help
+      This module defines a block device which makes another device look like a
+      SSD. This is not a filter deive (i.e. miscdevice) but a full-blown
+      block_device.
+
+      The device to mask is configurable via sysfs and should not be mounted or in
+      use while this device is being configured or used! (Otherwise, you could get
+      weird results)...
+
+      The device is configured by writing the path of the masked device to
+      /sys/module/ssdswap/device. To unset the masked device, write an empty
+      string.
+
 config SBALLOC
 	tristate "Low density storage for compressed pages"
 	default n
