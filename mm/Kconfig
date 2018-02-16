@@ -595,6 +595,15 @@ config ZTIER
 	  page.  It attempts to retain the simplicity and deteminism of zbud,
 	  while achieving higher density.
 
+config SSDSWAP
+    tristate "A module which makes another device look like a non-rotational device"
+    default n
+    help
+      After loading this module, the sysfs can be used to choose a device to make
+      non-rotational. The device should not be mounted or in use! (Otherwise, you
+      could get weird results)...  The device is chosen by writing its path to
+      /sys/module/ssdswap/device. To unset the device, write an empty string.
+
 config ZSMALLOC
 	tristate "Memory allocator for compressed pages"
 	depends on MMU
