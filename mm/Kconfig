@@ -576,15 +576,13 @@ config ZTIER
 	  while achieving higher density.
 
 config SSDSWAP
-    tristate "A misc device which makes another device look like a non-rotational device"
+    tristate "A module which makes another device look like a non-rotational device"
     default n
     help
-      After loading this module, the sysfs can be used to choose a disk to make
-      non-rotational if it is not already The other device should not be mounted
-      or in use while this device is being configured or used! (Otherwise, you
-      could get weird results)...  The device is configured by writing the path of
-      the masked device to /sys/module/ssdswap/device. To unset the masked device,
-      write an empty string.
+      After loading this module, the sysfs can be used to choose a device to make
+      non-rotational. The device should not be mounted or in use! (Otherwise, you
+      could get weird results)...  The device is chosen by writing its path to
+      /sys/module/ssdswap/device. To unset the device, write an empty string.
 
 config SBALLOC
 	tristate "Low density storage for compressed pages"
