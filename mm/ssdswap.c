@@ -38,6 +38,18 @@ static struct block_device *blkdev;
 // The value of the QUEUE_NONROT flag before we fiddled with it.
 static bool original_nonrot_flag;
 
+static int isspace(int c) {
+    switch (c) {
+        case '\n':
+        case ' ':
+        case '\t':
+        case '\r':
+            return true;
+        default:
+            return false;
+    }
+}
+
 // strncpy, but also it
 // - strips whitespace
 // - returns the new (stripped) length
@@ -45,7 +57,7 @@ static unsigned long strncpy_strip(char *dest, const char *src, unsigned long ma
 {
     unsigned long i, j;
     for(i = 0, j = 0;
-        dest[j] = src[i] && j < max && i < max;
+        (dest[j] = src[i]) && j < max && i < max;
         j+=!isspace(src[i++]));
 
     return j;
