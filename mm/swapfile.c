@@ -512,7 +512,11 @@ static unsigned long scan_swap_map(struct swap_info_struct *si,
 		goto checks;
 	}
 
+    // In the unlikely case where the current cluster runs out of slots, search
+    // for a new cluster.
 	if (unlikely(!si->cluster_nr--)) {
+        // If the number of free slots is not enough for a cluster, don't try
+        // to allocate a new cluster... duh.
 		if (si->pages - si->inuse_pages < SWAPFILE_CLUSTER) {
 			si->cluster_nr = SWAPFILE_CLUSTER - 1;
 			goto checks;
@@ -526,13 +530,34 @@ static unsigned long scan_swap_map(struct swap_info_struct *si,
 		 * If seek is cheap, that is the SWP_SOLIDSTATE si->cluster_info
 		 * case, just handled by scan_swap_map_try_ssd_cluster() above.
 		 */
+
+        // scan_base: TODO: what is this?
+        // offset: the offset of the beginning of the new cluster (not
+        //   necessarily aligned)
+        // last_in_cluster: the offset of the last slot of the cluster we are
+        //   currently looking at. We should have offset <= last_in_cluster
+        //   always.
 		scan_base = offset = si->lowest_bit;
 		last_in_cluster = offset + SWAPFILE_CLUSTER - 1;
 
 		/* Locate the first empty (unaligned) cluster */
+
+        // We keep incrementing offset to work through the contents of the
+        // swap_map to try to find a cluster that is completely empty (though
+        // maybe unaligned). If we go past si->highest_bit, we give up...
 		for (; last_in_cluster <= si->highest_bit; offset++) {
+            // If we come to an offset that is currently in use, then the
+            // current cluster is spoiled. Treat the next offset as the start
+            // of a new cluster and update last_in_cluster accordingly.
 			if (si->swap_map[offset])
 				last_in_cluster = offset + SWAPFILE_CLUSTER;
+
+            // We have finished scanning the current cluster and everything
+            // is empty, so this is an empty cluster! Yay!
+            //
+            // Reset `offset` to the beginning.
+            // Reset `cluster_next` and `cluster_nr` to the new cluster.
+            // Go to checks.
 			else if (offset == last_in_cluster) {
 				spin_lock(&si->lock);
 				offset -= SWAPFILE_CLUSTER - 1;
@@ -540,6 +565,8 @@ static unsigned long scan_swap_map(struct swap_info_struct *si,
 				si->cluster_nr = SWAPFILE_CLUSTER - 1;
 				goto checks;
 			}
+
+            // Ran out of time... schedule to continue later.
 			if (unlikely(--latency_ration < 0)) {
 				cond_resched();
 				latency_ration = LATENCY_LIMIT;
@@ -552,6 +579,11 @@ static unsigned long scan_swap_map(struct swap_info_struct *si,
 	}
 
 checks:
+    // NOTE: when we get here si->lock should be held.
+
+    // When we get here, we have done some work to try to find a swap cluster
+    // with some space, and now we want to check what the outcome was.
+
 	if (si->cluster_info) {
 		while (scan_swap_map_ssd_cluster_conflict(si, offset))
 			scan_swap_map_try_ssd_cluster(si, &offset, &scan_base);
