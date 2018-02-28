@@ -2493,6 +2493,11 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 		error = -ENOMEM;
 		goto bad_swap;
 	}
+    if (p->bdev) {
+        queue_flag_set_unlocked(
+                QUEUE_FLAG_NONROT,
+                bdev_get_queue(p->bdev));
+    }
 	if (p->bdev && blk_queue_nonrot(bdev_get_queue(p->bdev))) {
 		int cpu;
 
