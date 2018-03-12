@@ -512,6 +512,16 @@ static unsigned long scan_swap_map(struct swap_info_struct *si,
 		goto checks;
 	}
 
+    /* HDD algorithm */
+    // We know that si->lock is already held here
+
+    // If out of entries... oh, well
+    if (si->next_swapent == ~0) {
+        goto no_page;
+    }
+
+    return si->next_swapent++;
+
     // In the unlikely case where the current cluster runs out of slots, search
     // for a new cluster.
 	if (unlikely(!si->cluster_nr--)) {
@@ -2207,6 +2217,8 @@ static struct swap_info_struct *alloc_swap_info(void)
 	spin_unlock(&swap_lock);
 	spin_lock_init(&p->lock);
 
+    p->next_swapent = 0;
+
 	return p;
 }
 
@@ -2493,11 +2505,6 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 		error = -ENOMEM;
 		goto bad_swap;
 	}
-    if (p->bdev) {
-        queue_flag_set_unlocked(
-                QUEUE_FLAG_NONROT,
-                bdev_get_queue(p->bdev));
-    }
 	if (p->bdev && blk_queue_nonrot(bdev_get_queue(p->bdev))) {
 		int cpu;
 

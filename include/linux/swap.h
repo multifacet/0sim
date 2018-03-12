@@ -246,6 +246,7 @@ struct swap_info_struct {
 	struct work_struct discard_work; /* discard worker */
 	struct swap_cluster_info discard_cluster_head; /* list head of discard clusters */
 	struct swap_cluster_info discard_cluster_tail; /* list tail of discard clusters */
+    unsigned long next_swapent;
 };
 
 /* linux/mm/workingset.c */
