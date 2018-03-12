@@ -515,12 +515,28 @@ static unsigned long scan_swap_map(struct swap_info_struct *si,
     /* HDD algorithm */
     // We know that si->lock is already held here
 
-    // If out of entries... oh, well
-    if (si->next_swapent == ~0) {
-        goto no_page;
+    // Start from si->next_swapent and keep going till we find an unused swap
+    // entry. Make at most one scan through the whole map.
+    scan_base = si->next_swapent;
+    if (si->next_swapent+1 == si->max) {
+        si->next_swapent = 0;
+    } else {
+        si->next_swapent++;
     }
 
-    return si->next_swapent++;
+    while (si->next_swapent != scan_base && si->swap_map[si->next_swapent]) {
+        if (si->next_swapent+1 == si->max) {
+            si->next_swapent = 0;
+        } else {
+            si->next_swapent++;
+        }
+    }
+
+    offset = si->next_swapent;
+    goto checks;
+
+
+
 
     // In the unlikely case where the current cluster runs out of slots, search
     // for a new cluster.
