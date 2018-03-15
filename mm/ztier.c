@@ -346,6 +346,7 @@ static void ztier_init_page(struct ztier_pool *pool,
     BUG_ON(!raw_page);
 
     // Record the size of the chunks of the page and unset the RECLAIM_FLAG
+    BUG_ON(tier >= NUM_TIERS);
     page->private = tier;
 
     // Insert into list of pages
@@ -428,7 +429,7 @@ static struct page *ztier_reclaim_select_page(struct ztier_pool *pool,
                 // If the tier is empty move to the next tier and try again.
                 (*current_tier)++;
             } else {
-                *current_page = list_last_entry(&pool->used_pages[*current_tier],
+                return *current_page = list_last_entry(&pool->used_pages[*current_tier],
                                                 struct page,
                                                 lru);
             }
@@ -460,10 +461,12 @@ static void ztier_page_chunks_under_reclaim(struct ztier_pool *pool,
     int tier = page->private & TIER_MASK;
     unsigned long vaddr = (unsigned long)page_address(page);
 
+    BUG_ON(tier >= NUM_TIERS);
+
     ztier_rb_move_range(&pool->free_lists[tier],
                         &pool->under_reclaim,
                         (struct ztier_chunk *)vaddr,
-                        (struct ztier_chunk *)vaddr + PAGE_SIZE);
+                        (struct ztier_chunk *)(vaddr + PAGE_SIZE));
 }
 
 /*
@@ -478,10 +481,12 @@ static void ztier_page_chunks_from_under_reclaim(struct ztier_pool *pool,
     int tier = page->private & TIER_MASK;
     unsigned long vaddr = (unsigned long)page_address(page);
 
+    BUG_ON(tier >= NUM_TIERS);
+
     ztier_rb_move_range(&pool->under_reclaim,
                         &pool->free_lists[tier],
                         (struct ztier_chunk *)vaddr,
-                        (struct ztier_chunk *)vaddr + PAGE_SIZE);
+                        (struct ztier_chunk *)(vaddr + PAGE_SIZE));
 }
 
 /*
@@ -500,6 +505,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
     int ret;
 
     BUG_ON(!page);
+    BUG_ON(tier >= NUM_TIERS);
 
     spin_lock(&pool->lock);
 
@@ -541,6 +547,8 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
     unsigned long vaddr = (unsigned long)page_address(page);
     int i;
 
+    BUG_ON(tier >= NUM_TIERS);
+
     // for each chunk in the page, if that chunk is not in under_reclaim,
     // return false. Otherwise, proceed.
     for (i = 0; i < PAGE_SIZE; i += TIER_SIZES[tier]) {
@@ -555,12 +563,12 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
     ztier_rb_move_range(&pool->under_reclaim,
                         NULL,
                         (struct ztier_chunk *)vaddr,
-                        (struct ztier_chunk *)vaddr + PAGE_SIZE);
+                        (struct ztier_chunk *)(vaddr + PAGE_SIZE));
 
     // Free the page...
     //
     // NOTE: the page is already removed from the lru list by ztier_reclaim_page
-    page->private = 0;
+    page->private = 0xDEADBEEF;
     __free_page(page);
 
     // Update size
@@ -672,11 +680,12 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
     // if there is no free chunk, allocate a new page and add it to the pool
     if (!free) {
         // Allocate a new page
+        spin_unlock(&pool->lock);
         page = alloc_page(gfp);
         if (!page) {
-            spin_unlock(&pool->lock);
             return -ENOMEM;
         }
+        spin_lock(&pool->lock);
 
         BUG_ON(page->lru.next != LIST_POISON1);
         BUG_ON(page->lru.prev != LIST_POISON2);
@@ -734,6 +743,7 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
 
     // Sanity check: make sure the alignment of the given handle makes sense
     BUG_ON(handle % TIER_SIZES[tier] != 0);
+    BUG_ON(tier >= NUM_TIERS);
 
     RB_CLEAR_NODE(&chunk->node);
 
@@ -842,6 +852,16 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
             spin_unlock(&pool->lock);
             return -EAGAIN;
         }
+
+        if (page->private & RECLAIM_FLAG) {
+            printk("strange page private value %p %lx\n", page, page->private);
+            BUG();
+        } else if ((page->private & TIER_MASK) >= NUM_TIERS) {
+            printk("strange page private value %p %lx\n", page, page->private);
+            BUG();
+        }
+
+        BUG_ON(current_tier >= NUM_TIERS);
 
         // set the RECLAIM_FLAG on the page
         page->private |= RECLAIM_FLAG;
