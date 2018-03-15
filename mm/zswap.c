@@ -1079,6 +1079,10 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
             alloc_l1_bimap = mk_radix_bitmap_l1(
                     __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM);
 
+            if (!alloc_l1_bimap) {
+                return -ENOMEM;
+            }
+
             spin_lock(&tree->lock);
 
             // Retry set

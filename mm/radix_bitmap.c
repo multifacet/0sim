@@ -66,6 +66,7 @@ struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
  */
 bool radix_bitmap_create(struct radix_bitmap *rb, gfp_t gfp) {
     rb->l0 = mk_radix_bitmap_l0(gfp);
+    BUG_ON(!rb->l0);
     rb->size = L0_SIZE;
     if(!rb->l0) {
         return 1;

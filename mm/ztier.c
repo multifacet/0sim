@@ -65,16 +65,16 @@ struct ztier_pool {
 
     // A set of free lists. Each free list is a rbtree to make it easier to
     // find pages that are completely unused.
-    struct rb_root free_lists[NUM_TIERS];
+    struct rb_root free_lists[NUM_TIERS]; // tree of struct ztier_chunk
 
     // Keep track of the pages allocated so that we can reclaim if needed.
     // This is done by linking together all of the pages via the `lru` field
     // in the struct page. The pages for each tier are kept separate.
-    struct list_head used_pages[NUM_TIERS];
+    struct list_head used_pages[NUM_TIERS]; // list of struct page
 
     // A set of chunks whose pages are under reclamation. These chunks are
     // not available for allocation.
-    struct rb_root under_reclaim;
+    struct rb_root under_reclaim; // tree of struct ztier_chunk
 
     // Keep track of the size of the pool (in bytes)
     unsigned long size;
@@ -406,6 +406,27 @@ static void ztier_free_all(struct ztier_pool *pool) {
     }
 }
 
+static void dump_state(struct ztier_pool *pool) {
+    int tier;
+    struct rb_node *n;
+    struct list_head *l;
+
+    for (tier = 0; tier < NUM_TIERS; tier++) {
+        printk("tier %d free_list\n", tier);
+
+        n = rb_first(&pool->free_lists[tier]);
+        while (n) {
+            printk("%p\n", n);
+            n = rb_next(n);
+        }
+
+        printk("tier %d used_pages\n", tier);
+        list_for_each(l, &pool->used_pages[tier])
+            printk("%p\n", list_entry(l, struct page, lru));
+    }
+}
+
+
 /* Select a page to attempt to reclaim from the given pool. This is a stateful
  * routine that keeps track of what pages it has previously selected via the
  * current_tier and current_page pointers.
@@ -428,6 +449,7 @@ static struct page *ztier_reclaim_select_page(struct ztier_pool *pool,
             if (list_empty(&pool->used_pages[*current_tier])) {
                 // If the tier is empty move to the next tier and try again.
                 (*current_tier)++;
+                *current_page = NULL;
             } else {
                 return *current_page = list_last_entry(&pool->used_pages[*current_tier],
                                                 struct page,
@@ -440,6 +462,7 @@ static struct page *ztier_reclaim_select_page(struct ztier_pool *pool,
             if ((*current_page)->lru.prev == &pool->used_pages[*current_tier]) {
                 // Reached the beginning of the list; move to next tier
                 (*current_tier)++;
+                *current_page = NULL;
             } else {
                 return *current_page = list_prev_entry(*current_page, lru);
             }
