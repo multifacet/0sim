@@ -1068,7 +1068,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
                NULL);
 
         if (bitmap_res == -ENOMEM) {
-            lock_holder = 0x4A1
+            lock_holder = 0x4A1;
             spin_unlock(&tree->lock);
 
             // Attempt to reserve some space. We need to do this without
