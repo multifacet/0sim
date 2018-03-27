@@ -52,6 +52,9 @@ static const unsigned long RECLAIM_FLAG = (1ul << 63);
 // Everything except the RECLAIM_FLAG
 static const unsigned long TIER_MASK = GENMASK(62, 0);
 
+/* Debugging */
+static volatile u64 lock_holder; // don't optimize!
+
 /*****************
  * Structures
 *****************/
@@ -531,6 +534,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
     BUG_ON(tier >= NUM_TIERS);
 
     spin_lock(&pool->lock);
+    lock_holder = 0x1;
 
     // For each chunk in the page
     for (i = 0; i < PAGE_SIZE; i += TIER_SIZES[tier]) {
@@ -539,6 +543,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
         // If the chunk is not already under_reclaim
         if (!ztier_rb_contains(&pool->under_reclaim, (struct ztier_chunk *) handle))
         {
+            lock_holder = 0x1A;
             spin_unlock(&pool->lock);
 
             BUG_ON(handle % TIER_SIZES[tier] != 0);
@@ -550,9 +555,11 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
             }
 
             spin_lock(&pool->lock);
+            lock_holder = 0x2;
         }
     }
 
+    lock_holder = 0x2A;
     spin_unlock(&pool->lock);
 }
 
@@ -622,6 +629,7 @@ struct ztier_pool *ztier_create_pool(gfp_t gfp, const struct ztier_ops *ops)
         return NULL;
 
     spin_lock_init(&pool->lock);
+    lock_holder = 0;
     for (i = 0; i < NUM_TIERS; i++) {
         pool->free_lists[i] = RB_ROOT;
         INIT_LIST_HEAD(&pool->used_pages[i]);
@@ -696,6 +704,7 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
     BUG_ON(!tree);
 
     spin_lock(&pool->lock);
+    lock_holder = 0x3;
 
     // look in the free list for the first chunk
     free = rb_first(tree);
@@ -703,12 +712,14 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
     // if there is no free chunk, allocate a new page and add it to the pool
     if (!free) {
         // Allocate a new page
+        lock_holder = 0x3A;
         spin_unlock(&pool->lock);
         page = alloc_page(gfp);
         if (!page) {
             return -ENOMEM;
         }
         spin_lock(&pool->lock);
+        lock_holder = 0x4;
 
         BUG_ON(page->lru.next != LIST_POISON1);
         BUG_ON(page->lru.prev != LIST_POISON2);
@@ -728,6 +739,7 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
     rb_erase(free, tree);
     RB_CLEAR_NODE(free);
 
+    lock_holder = 0x4A;
     spin_unlock(&pool->lock);
 
     // return the allocation
@@ -771,6 +783,7 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
     RB_CLEAR_NODE(&chunk->node);
 
     spin_lock(&pool->lock);
+    lock_holder = 0x5;
 
     // Insert into free list or under_reclaim
     if (is_reclaim) {
@@ -779,6 +792,7 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
         ztier_rb_insert(&pool->free_lists[tier], chunk);
     }
 
+    lock_holder = 0x5A;
     spin_unlock(&pool->lock);
 }
 
@@ -852,12 +866,14 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
     struct page *current_page = NULL;
 
     spin_lock(&pool->lock);
+    lock_holder = 0x6;
 
     if (!pool->ops ||
         !pool->ops->evict ||
         ztier_all_tiers_empty(pool) ||
         retries == 0)
     {
+        lock_holder = 0x6A1;
         spin_unlock(&pool->lock);
         return -EINVAL;
     }
@@ -872,6 +888,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         // means trying to evict fewer pages -> less I/O).
         page = ztier_reclaim_select_page(pool, &current_tier, &current_page);
         if (!page) {
+            lock_holder = 0x6A2;
             spin_unlock(&pool->lock);
             return -EAGAIN;
         }
@@ -895,6 +912,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         // move all free chunks of the page from the free list to under_reclaim
         ztier_page_chunks_under_reclaim(pool, page);
 
+        lock_holder = 0x6A3;
         spin_unlock(&pool->lock);
 
         // for each chunk of the page not in the under_reclaim set, attempt an
@@ -902,10 +920,12 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         ztier_attempt_evict_page_chunks(pool, page);
 
         spin_lock(&pool->lock);
+        lock_holder = 0x7;
 
         // if all chunks of the selected page are now in under_reclaim, remove
         // the chunks from under_reclaim, free the page, and return sucess
         if (ztier_page_chunks_reclaimed(pool, page)) {
+            lock_holder = 0x7A1;
             spin_unlock(&pool->lock);
             return 0;
         }
@@ -917,6 +937,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         ztier_page_chunks_from_under_reclaim(pool, page);
     }
 
+    lock_holder = 0x6A4;
     spin_unlock(&pool->lock);
 
     return -EAGAIN;
