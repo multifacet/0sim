@@ -773,17 +773,20 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
     // allocation is.
     struct page *page = virt_to_page((void *)(handle & PAGE_MASK));
     struct ztier_chunk *chunk = (struct ztier_chunk *)handle;
-    int tier = page->private & TIER_MASK;
-    bool is_reclaim = !!(page->private & RECLAIM_FLAG);
+    int tier;
+    bool is_reclaim;
+
+    spin_lock(&pool->lock);
+    lock_holder = 0x5;
+
+    tier = page->private & TIER_MASK;
+    is_reclaim = !!(page->private & RECLAIM_FLAG);
 
     // Sanity check: make sure the alignment of the given handle makes sense
     BUG_ON(handle % TIER_SIZES[tier] != 0);
     BUG_ON(tier >= NUM_TIERS);
 
     RB_CLEAR_NODE(&chunk->node);
-
-    spin_lock(&pool->lock);
-    lock_holder = 0x5;
 
     // Insert into free list or under_reclaim
     if (is_reclaim) {
@@ -956,7 +959,7 @@ void *ztier_map(struct ztier_pool *pool, unsigned long handle)
 }
 
 /**
- * ztier_unmap() - maps the allocation associated with the given handle
+ * ztier_unmap() - unmaps the allocation associated with the given handle
  * @pool:   pool in which the allocation resides
  * @handle: handle associated with the allocation to be unmapped
  */
