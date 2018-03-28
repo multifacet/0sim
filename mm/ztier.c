@@ -98,15 +98,23 @@ struct ztier_pool {
  *
  * Instead of allocating separate memory for this structure, the structure is
  * placed at the beginning of a free chunk before it is inserted into the free
- * list. Only free chunks are in lists, so this is ok.
+ * list. Only free chunks are in lists, so this is ok. Rather than placing the
+ * tree node at the beginning of the free space, it is placed after where a
+ * zswap_header struct would be placed because zswap_writeback_entry implicitly
+ * assumes that it can tell whether an entry is invalidated or not.
  *
  * Note that this must fit inside of an allocation, so the minimum size of a
- * tier is sizeof(ztier_chunk).
+ * tier is sizeof(ztier_chunk) + sizeof(zswap_header).
  */
 struct ztier_chunk {
     // ztier_chunks are the contents of the rbtrees in ztier_pool
     struct rb_node node;
 };
+
+#define SIZE_OF_ZSWPHDR (sizeof(swp_entry_t))
+#define chunk_struct(chunk) ((struct ztier_chunk *)(((unsigned long)chunk) + \
+            SIZE_OF_ZSWPHDR))
+#define struct_chunk(str) ((void *)(((unsigned long)str) - SIZE_OF_ZSWPHDR))
 
 /*****************
  * zpool
@@ -336,6 +344,8 @@ static void ztier_rb_move_range(struct rb_root *from,
  *
  * Moreover, record what size of chunk the page was broken into using the
  * `private` field of the struct page.
+ *
+ * Caller should already hold the lock.
  */
 static void ztier_init_page(struct ztier_pool *pool,
                             struct page *page,
@@ -357,7 +367,7 @@ static void ztier_init_page(struct ztier_pool *pool,
 
     // Break into chunks and insert to tree
     for (i = 0; i < PAGE_SIZE; i += TIER_SIZES[tier]) {
-        chunk = (struct ztier_chunk *)&raw_page[i];
+        chunk = chunk_struct(&raw_page[i]);
         RB_CLEAR_NODE(&chunk->node);
         ztier_rb_insert(tree, chunk);
     }
@@ -541,7 +551,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
         handle = (vaddr + i);
 
         // If the chunk is not already under_reclaim
-        if (!ztier_rb_contains(&pool->under_reclaim, (struct ztier_chunk *) handle))
+        if (!ztier_rb_contains(&pool->under_reclaim, chunk_struct(handle)))
         {
             lock_holder = 0x1A;
             spin_unlock(&pool->lock);
@@ -582,8 +592,7 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
     // for each chunk in the page, if that chunk is not in under_reclaim,
     // return false. Otherwise, proceed.
     for (i = 0; i < PAGE_SIZE; i += TIER_SIZES[tier]) {
-        if (!ztier_rb_contains(&pool->under_reclaim,
-                               (struct ztier_chunk *) (vaddr + i)))
+        if (!ztier_rb_contains(&pool->under_reclaim, chunk_struct(vaddr + i)))
         {
             return false;
         }
@@ -592,8 +601,8 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
     // Remove all of the chunks of the given page from under_reclaim
     ztier_rb_move_range(&pool->under_reclaim,
                         NULL,
-                        (struct ztier_chunk *)vaddr,
-                        (struct ztier_chunk *)(vaddr + PAGE_SIZE));
+                        chunk_struct(vaddr),
+                        chunk_struct(vaddr + PAGE_SIZE));
 
     // Free the page...
     //
@@ -743,7 +752,7 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
     spin_unlock(&pool->lock);
 
     // return the allocation
-    *handle = (unsigned long)rb_entry(free, struct ztier_chunk, node);
+    *handle = (unsigned long)struct_chunk(rb_entry(free, struct ztier_chunk, node));
     return 0;
 }
 
@@ -772,7 +781,7 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
     // Get the struct page of the handle so we can find out how large the
     // allocation is.
     struct page *page = virt_to_page((void *)(handle & PAGE_MASK));
-    struct ztier_chunk *chunk = (struct ztier_chunk *)handle;
+    struct ztier_chunk *chunk = chunk_struct(handle);
     int tier;
     bool is_reclaim;
 
