@@ -36,7 +36,7 @@ enum TIERS {
     TIER1 = 1,
     TIER2 = 2,
 
-    NUM_TIERS = 3,
+    NUM_TIERS,
 };
 
 static const unsigned long TIER_SIZES[NUM_TIERS] = {
@@ -234,8 +234,12 @@ static struct rb_node *ztier_rb_ceil(struct rb_root *tree,
         } else if (found == chunk) {
             return node;
         } else { // node > chunk
-            // If node.left < chunk then return node; otherwise,
-            // keep going down the tree.
+            // If node.left < chunk (or there is no left) then return node;
+            // otherwise, keep going down the tree.
+            if (!node->rb_left) {
+                return node;
+            }
+
             found = rb_entry(node->rb_left, struct ztier_chunk, node);
             if (found < chunk) {
                 return node;
@@ -262,8 +266,12 @@ static struct rb_node *ztier_rb_floor(struct rb_root *tree,
         } else if (found == chunk) {
             return node;
         } else { // node < chunk
-            // If node.right > chunk then return node; otherwise,
-            // keep going down the tree.
+            // If node.right > chunk (or there is no right) then return node;
+            // otherwise, keep going down the tree.
+            if (!node->rb_right) {
+                return node;
+            }
+
             found = rb_entry(node->rb_right, struct ztier_chunk, node);
             if (found > chunk) {
                 return node;
@@ -290,9 +298,30 @@ static void ztier_rb_insert(struct rb_root *tree, struct ztier_chunk *new_chunk)
     struct rb_node *parent = NULL;
     struct ztier_chunk *chunk;
 
+    BUG_ON(((unsigned long)new_chunk) < 0x1000ul); // any invalid pointers!
+
     // Find the right spot
     while (*link)
     {
+        // node sanity
+        if (((unsigned long)*link) < 0x1000ul) {
+            printk(KERN_ERR "Invalid rb tree link. Node at: %p, left: %p, right: %p\n",
+                    parent, parent->rb_left, parent->rb_right);
+            BUG();
+        }
+
+        if ((((unsigned long)(*link)->rb_right) < 0x1000ul) && (*link)->rb_right) {
+            printk(KERN_ERR "Invalid rb tree link. Node at: %p, left: %p, right: %p\n",
+                    parent, parent->rb_left, parent->rb_right);
+            BUG();
+        }
+
+        if ((((unsigned long)(*link)->rb_left) < 0x1000ul) && (*link)->rb_left) {
+            printk(KERN_ERR "Invalid rb tree link. Node at: %p, left: %p, right: %p\n",
+                    parent, parent->rb_left, parent->rb_right);
+            BUG();
+        }
+
         parent = *link;
         chunk = rb_entry(parent, struct ztier_chunk, node);
 
@@ -301,6 +330,13 @@ static void ztier_rb_insert(struct rb_root *tree, struct ztier_chunk *new_chunk)
         } else {
             BUG_ON(chunk == new_chunk);
             link = &(*link)->rb_right;
+        }
+
+        // Pointers should either be null or valid
+        if ((((unsigned long)*link) < 0x1000ul) && *link) {
+            printk(KERN_ERR "Invalid rb tree link. Node at: %p, left: %p, right: %p\n",
+                    parent, parent->rb_left, parent->rb_right);
+            BUG();
         }
     }
 
@@ -541,6 +577,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
     int ret;
 
     BUG_ON(!page);
+    BUG_ON(!vaddr);
     BUG_ON(tier >= NUM_TIERS);
 
     spin_lock(&pool->lock);
@@ -588,6 +625,8 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
     int i;
 
     BUG_ON(tier >= NUM_TIERS);
+    BUG_ON(!page);
+    BUG_ON(!vaddr);
 
     // for each chunk in the page, if that chunk is not in under_reclaim,
     // return false. Otherwise, proceed.
@@ -753,6 +792,10 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
 
     // return the allocation
     *handle = (unsigned long)struct_chunk(rb_entry(free, struct ztier_chunk, node));
+
+    // Zero the contents
+    memset((void*)*handle, 0xBB, sizeof(struct ztier_chunk) + SIZE_OF_ZSWPHDR);
+
     return 0;
 }
 
@@ -785,6 +828,8 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
     int tier;
     bool is_reclaim;
 
+    BUG_ON(!handle);
+
     spin_lock(&pool->lock);
     lock_holder = 0x5;
 
@@ -794,6 +839,9 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
     // Sanity check: make sure the alignment of the given handle makes sense
     BUG_ON(handle % TIER_SIZES[tier] != 0);
     BUG_ON(tier >= NUM_TIERS);
+
+    // Zero the contents
+    memset((void*)handle, 0xAA, sizeof(struct ztier_chunk) + SIZE_OF_ZSWPHDR);
 
     RB_CLEAR_NODE(&chunk->node);
 

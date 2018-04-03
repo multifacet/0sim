@@ -32,6 +32,7 @@
 #include <linux/frontswap.h>
 #include <linux/rbtree.h>
 #include <linux/swap.h>
+#include <linux/swapfile.h>
 #include <linux/crypto.h>
 #include <linux/mempool.h>
 #include <linux/zpool.h>
@@ -882,6 +883,23 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
     zhdr = zpool_map_handle(pool, handle, ZPOOL_MM_RO);
     swpentry = zhdr->swpentry; /* here */
     zpool_unmap_handle(pool, handle);
+
+    /* ztier fills freed headers with 0xAA bytes */
+    if ((swp_offset(swpentry) & 0xFF) == 0xAA) {
+        // entry was previously invalidated
+        return 0;
+    }
+
+    if (swap_info[0]->max <= swp_offset(swpentry)
+        || !swap_info[0]->swap_map[swp_offset(swpentry)]) {
+        bool v = swap_info[0]->max > swp_offset(swpentry);
+        printk(KERN_ERR "swpentry %lx %d, zhdr %p, pool %p, swap max %x, swap ref %x\n",
+                swp_offset(swpentry), v, zhdr, pool,
+                swap_info[0]->max, v ?
+                swap_info[0]->swap_map[swp_offset(swpentry)] : 0);
+        BUG();
+    }
+
     tree = zswap_trees[swp_type(swpentry)];
     offset = swp_offset(swpentry);
 
@@ -901,17 +919,20 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 
     // There is no good reason to writeback a page of zeros.
     if (is_zeroed) {
+        //printk(KERN_INFO "ENOMEM 1\n");
         return -ENOMEM;
     }
 
     /* try to allocate swap cache page */
     switch (zswap_get_swap_cache_page(swpentry, &page)) {
     case ZSWAP_SWAPCACHE_FAIL: /* no memory or invalidate happened */
+        //printk(KERN_INFO "ENOMEM 2: swpentry %lx\n", swpentry.val);
         ret = -ENOMEM;
         goto fail;
 
     case ZSWAP_SWAPCACHE_EXIST:
         /* page is already in the swap cache, ignore for now */
+        //printk(KERN_INFO "swap cache entry found\n");
         page_cache_release(page);
         ret = -EEXIST;
         goto fail;
@@ -1041,6 +1062,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
         zswap_pool_limit_hit++;
         if (zswap_shrink()) {
             zswap_reject_reclaim_fail++;
+            //printk(KERN_INFO "ENOMEM 3\n");
             ret = -ENOMEM;
             goto reject;
         }
@@ -1077,6 +1099,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
                     __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM);
 
             if (!alloc_l1_bimap) {
+                //printk(KERN_INFO "ENOMEM 4\n");
                 return -ENOMEM;
             }
 
@@ -1096,6 +1119,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 
         // If failed, return nospc
         if (bitmap_res) {
+            //printk(KERN_INFO "ENOMEM 5\n");
             ret = -ENOMEM;
             goto reject;
         }
@@ -1118,6 +1142,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
     entry = zswap_entry_cache_alloc(GFP_KERNEL);
     if (!entry) {
         zswap_reject_kmemcache_fail++;
+        //printk(KERN_INFO "ENOMEM 6\n");
         ret = -ENOMEM;
         goto reject;
     }
