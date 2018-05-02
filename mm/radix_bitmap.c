@@ -18,7 +18,7 @@
  */
 struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp) {
     void *pages = __vmalloc(L0_SIZE,
-                            GFP_ATOMIC | __GFP_ZERO,
+                            gfp | GFP_ATOMIC | __GFP_ZERO,
                             PAGE_KERNEL);
     if (!pages) {
         return NULL;
@@ -50,7 +50,7 @@ void destroy_radix_bitmap_l1(struct radix_bitmap_l1 *l1) {
  */
 struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
     void *pages = __vmalloc(L1_SIZE,
-                            GFP_ATOMIC | __GFP_ZERO,
+                            gfp | GFP_ATOMIC | __GFP_ZERO,
                             PAGE_KERNEL);
     if (!pages) {
         return NULL;

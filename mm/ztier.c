@@ -43,9 +43,10 @@ static const unsigned long TIER_SIZES[NUM_TIERS] = {
     [TIER0] = (1<<11), // 2KB
     [TIER1] = (1<<10), // 1KB
     [TIER2] = (1<< 8), // 256B
+    //[TIER0] = (1<< 8), // 256B
 };
 
-// This bit is set in the struct page's `private` field when the page
+// This bit is set in the struct page's `ztier_private` field when the page
 // is going through reclaimation.
 static const unsigned long RECLAIM_FLAG = (1ul << 63);
 
@@ -71,7 +72,7 @@ struct ztier_pool {
     struct rb_root free_lists[NUM_TIERS]; // tree of struct ztier_chunk
 
     // Keep track of the pages allocated so that we can reclaim if needed.
-    // This is done by linking together all of the pages via the `lru` field
+    // This is done by linking together all of the pages via the `ztier_lru` field
     // in the struct page. The pages for each tier are kept separate.
     struct list_head used_pages[NUM_TIERS]; // list of struct page
 
@@ -354,14 +355,11 @@ static void ztier_rb_move_range(struct rb_root *from,
                                 struct ztier_chunk *after)
 {
     struct rb_node *node = ztier_rb_ceil(from, start);
-    struct rb_node *next;
     struct ztier_chunk *chunk;
 
     while (node) {
         chunk = rb_entry(node, struct ztier_chunk, node);
         if (chunk >= after) return;
-
-        next = rb_next(node);
 
         // Remove from old tree and add to new tree
         rb_erase(node, from);
@@ -370,8 +368,7 @@ static void ztier_rb_move_range(struct rb_root *from,
             ztier_rb_insert(to, chunk);
         }
 
-        // Go to next node
-        node = next;
+        node = ztier_rb_ceil(from, start);
     }
 }
 
@@ -379,7 +376,7 @@ static void ztier_rb_move_range(struct rb_root *from,
  * insert the new chunks into the given free list (tree).
  *
  * Moreover, record what size of chunk the page was broken into using the
- * `private` field of the struct page.
+ * `ztier_private` field of the struct page.
  *
  * Caller should already hold the lock.
  */
@@ -396,10 +393,15 @@ static void ztier_init_page(struct ztier_pool *pool,
 
     // Record the size of the chunks of the page and unset the RECLAIM_FLAG
     BUG_ON(tier >= NUM_TIERS);
-    page->private = tier;
+    BUG_ON(page->ztier_private != 0xDEADBEEF);
+    page->ztier_private = tier;
 
     // Insert into list of pages
-    list_add(&page->lru, &pool->used_pages[tier]);
+    INIT_LIST_HEAD(&page->ztier_lru);
+    list_add(&page->ztier_lru, &pool->used_pages[tier]);
+
+    // Clear the page (for debugging)
+    memset((void*)raw_page, 0xCC, PAGE_SIZE);
 
     // Break into chunks and insert to tree
     for (i = 0; i < PAGE_SIZE; i += TIER_SIZES[tier]) {
@@ -433,9 +435,11 @@ static void ztier_free_all(struct ztier_pool *pool) {
 
     for (i = 0; i < NUM_TIERS; i++) {
         while (!list_empty(&pool->used_pages[i])) {
-            page = list_first_entry(&pool->used_pages[i], struct page, lru);
+            page = list_first_entry(&pool->used_pages[i], struct page, ztier_lru);
             page_start = (unsigned long)page_address(page);
             page_end = page_start + PAGE_SIZE;
+
+            BUG_ON(!page_start);
 
             // Remove all chunks
             ztier_rb_move_range(&pool->free_lists[i],
@@ -444,8 +448,10 @@ static void ztier_free_all(struct ztier_pool *pool) {
                                 (struct ztier_chunk *)page_end);
 
             // Free the page
-            list_del(&page->lru);
-            page->private = 0xDEADBEEF;
+            list_del(&page->ztier_lru);
+            page->ztier_private = 0xDEADBEEF;
+        BUG_ON(page->ztier_lru.next != LIST_POISON1);
+        BUG_ON(page->ztier_lru.prev != LIST_POISON2);
             __free_page(page);
 
             // Update size
@@ -471,7 +477,7 @@ static void dump_state(struct ztier_pool *pool) {
 
         printk("tier %d used_pages\n", tier);
         list_for_each(l, &pool->used_pages[tier])
-            printk("%p\n", list_entry(l, struct page, lru));
+            printk("%p\n", list_entry(l, struct page, ztier_lru));
     }
 }
 
@@ -502,18 +508,18 @@ static struct page *ztier_reclaim_select_page(struct ztier_pool *pool,
             } else {
                 return *current_page = list_last_entry(&pool->used_pages[*current_tier],
                                                 struct page,
-                                                lru);
+                                                ztier_lru);
             }
         }
         // Otherwise, move backward in the list of used pages until either we
         // reach the beginning of the list.
         else {
-            if ((*current_page)->lru.prev == &pool->used_pages[*current_tier]) {
+            if ((*current_page)->ztier_lru.prev == &pool->used_pages[*current_tier]) {
                 // Reached the beginning of the list; move to next tier
                 (*current_tier)++;
                 *current_page = NULL;
             } else {
-                return *current_page = list_prev_entry(*current_page, lru);
+                return *current_page = list_prev_entry(*current_page, ztier_lru);
             }
         }
     }
@@ -530,10 +536,11 @@ static struct page *ztier_reclaim_select_page(struct ztier_pool *pool,
 static void ztier_page_chunks_under_reclaim(struct ztier_pool *pool,
                                             struct page *page)
 {
-    int tier = page->private & TIER_MASK;
+    int tier = page->ztier_private & TIER_MASK;
     unsigned long vaddr = (unsigned long)page_address(page);
 
     BUG_ON(tier >= NUM_TIERS);
+    BUG_ON(!vaddr);
 
     ztier_rb_move_range(&pool->free_lists[tier],
                         &pool->under_reclaim,
@@ -550,10 +557,11 @@ static void ztier_page_chunks_under_reclaim(struct ztier_pool *pool,
 static void ztier_page_chunks_from_under_reclaim(struct ztier_pool *pool,
                                                  struct page *page)
 {
-    int tier = page->private & TIER_MASK;
+    int tier = page->ztier_private & TIER_MASK;
     unsigned long vaddr = (unsigned long)page_address(page);
 
     BUG_ON(tier >= NUM_TIERS);
+    BUG_ON(!vaddr);
 
     ztier_rb_move_range(&pool->under_reclaim,
                         &pool->free_lists[tier],
@@ -570,7 +578,7 @@ static void ztier_page_chunks_from_under_reclaim(struct ztier_pool *pool,
 static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
                                             struct page *page)
 {
-    int tier = page->private & TIER_MASK;
+    int tier = page->ztier_private & TIER_MASK;
     unsigned long vaddr = (unsigned long)page_address(page);
     unsigned long handle;
     int i;
@@ -620,7 +628,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
 static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
                                         struct page *page)
 {
-    int tier = page->private & TIER_MASK;
+    int tier = page->ztier_private & TIER_MASK;
     unsigned long vaddr = (unsigned long)page_address(page);
     int i;
 
@@ -635,6 +643,16 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
         {
             return false;
         }
+        else
+        {
+            if (! ((*(unsigned int *)(vaddr + i) == 0xAAAAAAAA)
+                    || (*(unsigned int *)(vaddr + i) == 0xCCCCCCCC)))
+            {
+                printk(KERN_ERR "unfree page %p, vaddr %lx, value %x\n",
+                        page, vaddr + i, *(unsigned int *)(vaddr + i));
+                BUG();
+            }
+        }
     }
 
     // Remove all of the chunks of the given page from under_reclaim
@@ -643,10 +661,15 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
                         chunk_struct(vaddr),
                         chunk_struct(vaddr + PAGE_SIZE));
 
+    // Zero the contents
+    memset((void*)vaddr, 0xBB, PAGE_SIZE);
+
     // Free the page...
     //
-    // NOTE: the page is already removed from the lru list by ztier_reclaim_page
-    page->private = 0xDEADBEEF;
+    // NOTE: the page is already removed from the ztier_lru list by ztier_reclaim_page
+    page->ztier_private = 0xDEADBEEF;
+    BUG_ON(page->ztier_lru.next != LIST_POISON1);
+    BUG_ON(page->ztier_lru.prev != LIST_POISON2);
     __free_page(page);
 
     // Update size
@@ -769,9 +792,6 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
         spin_lock(&pool->lock);
         lock_holder = 0x4;
 
-        BUG_ON(page->lru.next != LIST_POISON1);
-        BUG_ON(page->lru.prev != LIST_POISON2);
-
         // split into chunks, adding each chunk to the tree
         ztier_init_page(pool, page, tier);
 
@@ -785,7 +805,6 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
     BUG_ON(!free);
 
     rb_erase(free, tree);
-    RB_CLEAR_NODE(free);
 
     lock_holder = 0x4A;
     spin_unlock(&pool->lock);
@@ -794,7 +813,7 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
     *handle = (unsigned long)struct_chunk(rb_entry(free, struct ztier_chunk, node));
 
     // Zero the contents
-    memset((void*)*handle, 0xBB, sizeof(struct ztier_chunk) + SIZE_OF_ZSWPHDR);
+    memset((void*)*handle, 0xBB, TIER_SIZES[tier]);
 
     return 0;
 }
@@ -811,13 +830,13 @@ int ztier_alloc(struct ztier_pool *pool, size_t size, gfp_t gfp,
  * implements `free` this way to avoid keeping track of non-free chunks, which
  * saves space and is faster/simpler.
  *
- * One caveat: if the RECLAIM_FLAG bit is set in the `private` field of the
+ * One caveat: if the RECLAIM_FLAG bit is set in the `ztier_private` field of the
  * chunk's struct page, then the page is placed into the `under_reclaim` tree
  * rather than the free list.
  */
 void ztier_free(struct ztier_pool *pool, unsigned long handle)
 {
-    // NOTE: The size of the chunks is stored in the `private` field of the
+    // NOTE: The size of the chunks is stored in the `ztier_private` field of the
     // struct page, which can be gotten from the address of the page (which is
     // the handle).
 
@@ -833,15 +852,16 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
     spin_lock(&pool->lock);
     lock_holder = 0x5;
 
-    tier = page->private & TIER_MASK;
-    is_reclaim = !!(page->private & RECLAIM_FLAG);
+    tier = page->ztier_private & TIER_MASK;
+    is_reclaim = !!(page->ztier_private & RECLAIM_FLAG);
 
     // Sanity check: make sure the alignment of the given handle makes sense
     BUG_ON(handle % TIER_SIZES[tier] != 0);
     BUG_ON(tier >= NUM_TIERS);
 
     // Zero the contents
-    memset((void*)handle, 0xAA, sizeof(struct ztier_chunk) + SIZE_OF_ZSWPHDR);
+    //memset((void*)handle, 0xAA, sizeof(struct ztier_chunk) + SIZE_OF_ZSWPHDR);
+    memset((void*)handle, 0xAA, TIER_SIZES[tier]);
 
     RB_CLEAR_NODE(&chunk->node);
 
@@ -924,6 +944,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
     // Keep track of the last tier and chunk address tried
     int current_tier = 0;
     struct page *current_page = NULL;
+    int reclaim_tier = 0xDEADBEEF;
 
     spin_lock(&pool->lock);
     lock_holder = 0x6;
@@ -953,26 +974,27 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
             return -EAGAIN;
         }
 
-        if (page->private & RECLAIM_FLAG) {
-            printk("strange page private value %p %lx\n", page, page->private);
+        if (page->ztier_private & RECLAIM_FLAG) {
+            printk("strange page ztier_private value %p %lx\n", page, page->ztier_private);
             BUG();
-        } else if ((page->private & TIER_MASK) >= NUM_TIERS) {
-            printk("strange page private value %p %lx\n", page, page->private);
+        } else if ((page->ztier_private & TIER_MASK) >= NUM_TIERS) {
+            printk("strange page ztier_private value %p %lx\n", page, page->ztier_private);
             BUG();
         }
 
         BUG_ON(current_tier >= NUM_TIERS);
 
         // set the RECLAIM_FLAG on the page
-        page->private |= RECLAIM_FLAG;
+        page->ztier_private |= RECLAIM_FLAG;
+        reclaim_tier = page->ztier_private & TIER_MASK;
 
         // Remove from list so that we don't try to evict it again concurrently
-        list_del(&page->lru);
+        list_del(&page->ztier_lru);
 
         // move all free chunks of the page from the free list to under_reclaim
         ztier_page_chunks_under_reclaim(pool, page);
 
-        lock_holder = 0x6A3;
+        //lock_holder = 0x6A3;
         spin_unlock(&pool->lock);
 
         // for each chunk of the page not in the under_reclaim set, attempt an
@@ -992,8 +1014,10 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
 
         // otherwise, replace all of the chunks from that page to the
         // appropriate free list again.
-        list_add(&page->lru, &pool->used_pages[current_tier]);
-        page->private = current_tier;
+        BUG_ON(reclaim_tier != current_tier);
+        INIT_LIST_HEAD(&page->ztier_lru);
+        list_add(&page->ztier_lru, &pool->used_pages[reclaim_tier]);
+        page->ztier_private = reclaim_tier;
         ztier_page_chunks_from_under_reclaim(pool, page);
     }
 

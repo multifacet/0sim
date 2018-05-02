@@ -192,6 +192,9 @@ struct page {
 	struct mem_cgroup *mem_cgroup;
 #endif
 
+    struct list_head ztier_lru;
+    unsigned long ztier_private;
+
 	/*
 	 * On machines where all RAM is mapped into kernel address space,
 	 * we can simply calculate the virtual address. On machines with

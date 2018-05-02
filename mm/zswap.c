@@ -885,7 +885,8 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
     zpool_unmap_handle(pool, handle);
 
     /* ztier fills freed headers with 0xAA bytes */
-    if ((swp_offset(swpentry) & 0xFF) == 0xAA) {
+    if ((((unsigned long)swpentry.val) & 0xFFFFFFFF) == 0xAAAAAAAA
+        || (((unsigned long)swpentry.val) & 0xFFFFFFFF) == 0xCCCCCCCC) {
         // entry was previously invalidated
         return 0;
     }
@@ -911,17 +912,18 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
     entry = zswap_entry_find_get(&tree->rbroot, offset);
     lock_holder = 0x1A;
     spin_unlock(&tree->lock);
-    if (!entry && !is_zeroed) {
-        /* entry was invalidated */
-        return 0;
-    }
-    BUG_ON(offset != entry->offset && !is_zeroed);
 
     // There is no good reason to writeback a page of zeros.
     if (is_zeroed) {
-        //printk(KERN_INFO "ENOMEM 1\n");
-        return -ENOMEM;
+        BUG();
+        return -EINVAL;
     }
+
+    if (!entry) {
+        /* entry was invalidated */
+        return 0;
+    }
+    BUG_ON(offset != entry->offset);
 
     /* try to allocate swap cache page */
     switch (zswap_get_swap_cache_page(swpentry, &page)) {
@@ -932,7 +934,7 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 
     case ZSWAP_SWAPCACHE_EXIST:
         /* page is already in the swap cache, ignore for now */
-        //printk(KERN_INFO "swap cache entry found\n");
+        //printk(KERN_INFO "swap cache entry found, page %p, swp offset %lx \n", page, offset);
         page_cache_release(page);
         ret = -EEXIST;
         goto fail;
@@ -941,22 +943,16 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
         dlen = PAGE_SIZE;
         dst = kmap_atomic(page);
 
-        /* generate a zero page if is_zeroed */
-        if (is_zeroed) {
-            memset(dst, 0, PAGE_SIZE);
-            ret = 0; // memset never errors :P
-        } else {
-            /* decompress */
-            src = (u8 *)zpool_map_handle(entry->pool->zpool, entry->handle,
-                    ZPOOL_MM_RO) + sizeof(struct zswap_header);
-            tfm = *get_cpu_ptr(entry->pool->tfm);
-            ret = crypto_comp_decompress(tfm, src, entry->length,
-                             dst, &dlen);
-            put_cpu_ptr(entry->pool->tfm);
-            zpool_unmap_handle(entry->pool->zpool, entry->handle);
-            BUG_ON(ret);
-            BUG_ON(dlen != PAGE_SIZE);
-        }
+        /* decompress */
+        src = (u8 *)zpool_map_handle(entry->pool->zpool, entry->handle,
+                ZPOOL_MM_RO) + sizeof(struct zswap_header);
+        tfm = *get_cpu_ptr(entry->pool->tfm);
+        ret = crypto_comp_decompress(tfm, src, entry->length,
+                         dst, &dlen);
+        put_cpu_ptr(entry->pool->tfm);
+        zpool_unmap_handle(entry->pool->zpool, entry->handle);
+        BUG_ON(ret);
+        BUG_ON(dlen != PAGE_SIZE);
 
         kunmap_atomic(dst);
 
@@ -974,24 +970,21 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
 
     spin_lock(&tree->lock);
     lock_holder = 2;
-    /* drop local reference */
-    if (is_zeroed) {
-        radix_bitmap_unset(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(offset));
-    } else {
-        zswap_entry_put(tree, entry);
 
-        /*
-        * There are two possible situations for entry here:
-        * (1) refcount is 1(normal case),  entry is valid and on the tree
-        * (2) refcount is 0, entry is freed and not on the tree
-        *     because invalidate happened during writeback
-        *  search the tree and free the entry if find entry
-        */
-        if (entry == zswap_rb_search(&tree->rbroot, offset)) {
-            zswap_entry_put(tree, entry);
-        }
+    /* drop local reference */
+    zswap_entry_put(tree, entry);
+
+    /*
+    * There are two possible situations for entry here:
+    * (1) refcount is 1(normal case),  entry is valid and on the tree
+    * (2) refcount is 0, entry is freed and not on the tree
+    *     because invalidate happened during writeback
+    *  search the tree and free the entry if find entry
+    */
+    if (entry == zswap_rb_search(&tree->rbroot, offset)) {
+        zswap_entry_put(tree, entry);
     }
+
     lock_holder = 0x2A;
     spin_unlock(&tree->lock);
 
@@ -1005,13 +998,11 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
     * it it either okay to return !0
     */
 fail:
-    if (!is_zeroed) {
-        spin_lock(&tree->lock);
-        lock_holder = 3;
-        zswap_entry_put(tree, entry);
-        lock_holder = 0x3A;
-        spin_unlock(&tree->lock);
-    }
+    spin_lock(&tree->lock);
+    lock_holder = 3;
+    zswap_entry_put(tree, entry);
+    lock_holder = 0x3A;
+    spin_unlock(&tree->lock);
 
 end:
     return ret;
@@ -1057,6 +1048,34 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
         goto reject;
     }
 
+    /* Invalidate the page if it was already in zswap. We _cannot_ have
+     * multiple copies.
+     *
+     * NOTE: this needs to happen no matter what. Any values in the store are
+     * invalid because the swapping subsystem wants to write something new
+     * anyway.
+     */
+
+    // remove any entry from bitmap before putting elsewhere
+    spin_lock(&tree->lock);
+    lock_holder = 5;
+
+    radix_bitmap_unset(&zswap_zero_bitmap,
+            RADIX_BITMAP_VAL_MASK(offset));
+
+    // May need to remove an entry from the tree
+    entry = zswap_rb_search(&tree->rbroot, offset);
+    if (entry) {
+        /* remove from rbtree */
+        zswap_rb_erase(&tree->rbroot, entry);
+
+        /* drop the initial reference from entry creation */
+        zswap_entry_put(tree, entry);
+    }
+
+    lock_holder = 0x5A;
+    spin_unlock(&tree->lock);
+
     /* reclaim space if needed */
     if (zswap_is_full()) {
         zswap_pool_limit_hit++;
@@ -1074,16 +1093,6 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
         spin_lock(&tree->lock);
         lock_holder = 4;
 
-        // May need to remove an entry from the tree
-        entry = zswap_rb_search(&tree->rbroot, offset);
-        if (entry) {
-            /* remove from rbtree */
-            zswap_rb_erase(&tree->rbroot, entry);
-
-            /* drop the initial reference from entry creation */
-            zswap_entry_put(tree, entry);
-        }
-
         // Set a bit in the bitmap
         bitmap_res = radix_bitmap_set(&zswap_zero_bitmap,
                RADIX_BITMAP_VAL_MASK(offset),
@@ -1100,6 +1109,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 
             if (!alloc_l1_bimap) {
                 //printk(KERN_INFO "ENOMEM 4\n");
+                kunmap_atomic(src);
                 return -ENOMEM;
             }
 
@@ -1129,14 +1139,6 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
             goto success;
         }
     }
-
-    // remove any entry from bitmap before putting elsewhere
-    spin_lock(&tree->lock);
-    lock_holder = 5;
-    radix_bitmap_unset(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(offset));
-    lock_holder = 0x5A;
-    spin_unlock(&tree->lock);
 
     /* allocate entry */
     entry = zswap_entry_cache_alloc(GFP_KERNEL);
@@ -1213,10 +1215,11 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
     do {
         ret = zswap_rb_insert(&tree->rbroot, entry, &dupentry);
         if (ret == -EEXIST) {
-            zswap_duplicate_entry++;
-            /* remove from rbtree */
-            zswap_rb_erase(&tree->rbroot, dupentry);
-            zswap_entry_put(tree, dupentry);
+            BUG();
+            //zswap_duplicate_entry++;
+            ///* remove from rbtree */
+            //zswap_rb_erase(&tree->rbroot, dupentry);
+            //zswap_entry_put(tree, dupentry);
         }
     } while (ret == -EEXIST);
     lock_holder = 0x6A;
