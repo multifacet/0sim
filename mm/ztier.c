@@ -295,11 +295,22 @@ static bool ztier_rb_contains(struct rb_root *tree, struct ztier_chunk *chunk)
 /* Insert the given free new_chunk into the given free list (tree) */
 static void ztier_rb_insert(struct rb_root *tree, struct ztier_chunk *new_chunk)
 {
-    struct rb_node **link = &tree->rb_node;
+    struct rb_node **link;
     struct rb_node *parent = NULL;
     struct ztier_chunk *chunk;
 
     BUG_ON(((unsigned long)new_chunk) < 0x1000ul); // any invalid pointers!
+    BUG_ON(((unsigned long)tree) < 0x1000ul); // any invalid pointers!
+
+    if ( ((*(unsigned int *)struct_chunk(new_chunk)) != 0xAAAAAAAA &&
+          (*(unsigned int *)struct_chunk(new_chunk)) != 0xCCCCCCCC))
+    {
+        printk("Odd value in insert new_chunk %p, contents %lx\n", new_chunk,
+                *(unsigned long *)struct_chunk(new_chunk));
+        BUG();
+    }
+
+    link = &tree->rb_node;
 
     // Find the right spot
     while (*link)
@@ -307,19 +318,25 @@ static void ztier_rb_insert(struct rb_root *tree, struct ztier_chunk *new_chunk)
         // node sanity
         if (((unsigned long)*link) < 0x1000ul) {
             printk(KERN_ERR "Invalid rb tree link. Node at: %p, left: %p, right: %p\n",
-                    parent, parent->rb_left, parent->rb_right);
+                    parent,
+                    parent ? parent->rb_left : NULL,
+                    parent ? parent->rb_right : NULL);
             BUG();
         }
 
         if ((((unsigned long)(*link)->rb_right) < 0x1000ul) && (*link)->rb_right) {
             printk(KERN_ERR "Invalid rb tree link. Node at: %p, left: %p, right: %p\n",
-                    parent, parent->rb_left, parent->rb_right);
+                    parent,
+                    parent ? parent->rb_left : NULL,
+                    parent ? parent->rb_right : NULL);
             BUG();
         }
 
         if ((((unsigned long)(*link)->rb_left) < 0x1000ul) && (*link)->rb_left) {
             printk(KERN_ERR "Invalid rb tree link. Node at: %p, left: %p, right: %p\n",
-                    parent, parent->rb_left, parent->rb_right);
+                    parent,
+                    parent ? parent->rb_left : NULL,
+                    parent ? parent->rb_right : NULL);
             BUG();
         }
 
@@ -450,8 +467,8 @@ static void ztier_free_all(struct ztier_pool *pool) {
             // Free the page
             list_del(&page->ztier_lru);
             page->ztier_private = 0xDEADBEEF;
-        BUG_ON(page->ztier_lru.next != LIST_POISON1);
-        BUG_ON(page->ztier_lru.prev != LIST_POISON2);
+            BUG_ON(page->ztier_lru.next != LIST_POISON1);
+            BUG_ON(page->ztier_lru.prev != LIST_POISON2);
             __free_page(page);
 
             // Update size
@@ -611,6 +628,13 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
 
             spin_lock(&pool->lock);
             lock_holder = 0x2;
+        } else 
+        if ( ((*(unsigned int *)handle) != 0xAAAAAAAA &&
+              (*(unsigned int *)handle) != 0xCCCCCCCC))
+        {
+            printk("Odd value in insert handle %lx, contents %lx\n", handle,
+                    *(unsigned long *)handle);
+            BUG();
         }
     }
 
@@ -662,7 +686,7 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
                         chunk_struct(vaddr + PAGE_SIZE));
 
     // Zero the contents
-    memset((void*)vaddr, 0xBB, PAGE_SIZE);
+    memset((void*)vaddr, 0xDD, PAGE_SIZE);
 
     // Free the page...
     //
@@ -860,7 +884,6 @@ void ztier_free(struct ztier_pool *pool, unsigned long handle)
     BUG_ON(tier >= NUM_TIERS);
 
     // Zero the contents
-    //memset((void*)handle, 0xAA, sizeof(struct ztier_chunk) + SIZE_OF_ZSWPHDR);
     memset((void*)handle, 0xAA, TIER_SIZES[tier]);
 
     RB_CLEAR_NODE(&chunk->node);

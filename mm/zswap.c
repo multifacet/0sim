@@ -1181,6 +1181,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
         goto put_dstmem;
     }
     zhdr = zpool_map_handle(entry->pool->zpool, handle, ZPOOL_MM_RW);
+    BUG_ON((*(unsigned int *)zhdr) != 0xBBBBBBBB); //TODO
     zhdr->swpentry = swp_entry(type, offset);
     buf = (u8 *)(zhdr + 1);
     memcpy(buf, dst, dlen);
