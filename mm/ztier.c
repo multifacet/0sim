@@ -39,6 +39,8 @@ enum TIERS {
     NUM_TIERS,
 };
 
+static bool debug_print_on = false;
+
 static const unsigned long TIER_SIZES[NUM_TIERS] = {
     [TIER0] = (1<<11), // 2KB
     [TIER1] = (1<<10), // 1KB
@@ -123,6 +125,9 @@ struct ztier_chunk {
  * These implementations are basically copied from zbud.
  ****************/
 
+/* for debugging */
+static struct ztier_pool *my_ztier_pool = NULL;
+
 #ifdef CONFIG_ZPOOL
 
 static int ztier_zpool_evict(struct ztier_pool *pool, unsigned long handle)
@@ -148,6 +153,9 @@ static void *ztier_zpool_create(const char *name, gfp_t gfp,
         pool->zpool = zpool;
         pool->zpool_ops = zpool_ops;
     }
+
+    my_ztier_pool = pool;
+
     return pool;
 }
 
@@ -375,6 +383,10 @@ static void ztier_rb_move_range(struct rb_root *from,
     struct ztier_chunk *chunk;
 
     while (node) {
+        if (debug_print_on) {
+            printk("move %p -> %p node %p\n", from, to, node);
+        }
+
         chunk = rb_entry(node, struct ztier_chunk, node);
         if (chunk >= after) return;
 
@@ -478,6 +490,7 @@ static void ztier_free_all(struct ztier_pool *pool) {
     }
 }
 
+/* For debugging. Dumps the contents of some data structures */
 static void dump_state(struct ztier_pool *pool) {
     int tier;
     struct rb_node *n;
@@ -498,6 +511,155 @@ static void dump_state(struct ztier_pool *pool) {
     }
 }
 
+/* Trigger the scrubber by writing to the sysfs. */
+static int ztier_debug_trigger = 0;
+static int ztier_scrub_and_panic(const char *, const struct kernel_param *);
+static struct kernel_param_ops ztier_debug_trigger_param_ops = {
+    .set =      ztier_scrub_and_panic,
+    .get =      param_get_int,
+};
+module_param_cb(debug_trigger, &ztier_debug_trigger_param_ops,
+        &ztier_debug_trigger, 0644);
+
+/* Sanity check all data structures and panic if something is amiss. */
+static int ztier_scrub_and_panic(const char * str,
+                                 const struct kernel_param * kp)
+{
+    int i;
+    unsigned long last = 0;
+    unsigned long tier = 0;
+    unsigned long size = 0;
+    struct rb_node *n = NULL;
+    unsigned long page_addr = 0;
+    struct page *page = NULL;
+    struct rb_root tmp = RB_ROOT;
+
+    printk(KERN_ERR "ztier trigger debug...\n");
+
+    debug_print_on = true;
+
+    spin_lock(&my_ztier_pool->lock);
+
+    /* sanity check trees */
+
+    /* under_reclaim */
+    printk(KERN_ERR "checking under_reclaim\n");
+
+    last = 0;
+    tier = 0;
+    size = 0;
+    n = NULL;
+    page_addr = 0;
+    page = NULL;
+    tmp = RB_ROOT;
+
+    n = rb_first(&my_ztier_pool->under_reclaim);
+    while (n) {
+        printk(KERN_ERR "check chunk %p\n", n);
+
+        page_addr = ((unsigned long)n) & PAGE_MASK;
+        page = virt_to_page(page_addr);
+        tier = page->ztier_private & TIER_MASK;
+
+        // under_reclaim flag must be set
+        if (!(page->ztier_private & RECLAIM_FLAG)) {
+            printk("ztier_private = %lx\n", page->ztier_private);
+            BUG();
+        }
+
+        // sane tier
+        BUG_ON(tier >= NUM_TIERS);
+
+        // No overlap
+        if (last + size > (unsigned long)n) {
+            printk(KERN_ERR "%lx + %lx > %lx\n",
+                    last, size, page_addr);
+            BUG();
+        }
+
+        size = TIER_SIZES[tier];
+        last = (unsigned long)n;
+        n = rb_next(n);
+    }
+
+    printk(KERN_ERR "checking under_reclaim tree sanity\n");
+
+    ztier_rb_move_range(&my_ztier_pool->under_reclaim,
+                        &tmp,
+                        (struct ztier_chunk *)0,
+                        (struct ztier_chunk *)~0);
+    ztier_rb_move_range(&tmp,
+                        &my_ztier_pool->under_reclaim,
+                        (struct ztier_chunk *)0,
+                        (struct ztier_chunk *)~0);
+
+    printk(KERN_ERR "checking free_lists\n");
+
+    /* sanity check each tier's free list */
+    for (i = 0; i < NUM_TIERS; i++) {
+
+        printk(KERN_ERR "checking free_lists[%d]\n", i);
+
+        last = 0;
+        tier = 0;
+        size = 0;
+        n = NULL;
+        page_addr = 0;
+        page = NULL;
+        tmp = RB_ROOT;
+
+        n = rb_first(&my_ztier_pool->free_lists[i]);
+        while (n) {
+            printk(KERN_ERR "check chunk %p\n", n);
+
+            page_addr = ((unsigned long)n) & PAGE_MASK;
+            page = virt_to_page(page_addr);
+            tier = page->ztier_private & TIER_MASK;
+
+            // under_reclaim flag must not be set
+            BUG_ON(page->ztier_private & RECLAIM_FLAG);
+
+            // correct tier
+            BUG_ON(tier != i);
+
+            // No overlap
+            if (last + size > (unsigned long)n) {
+                printk(KERN_ERR "%lx + %lx > %lx\n",
+                        last, size, page_addr);
+                BUG();
+            }
+
+            size = TIER_SIZES[tier];
+            last = (unsigned long)n;
+            n = rb_next(n);
+        }
+
+        printk(KERN_ERR "checking free_lists[%d] tree sanity\n", i);
+
+        ztier_rb_move_range(&my_ztier_pool->free_lists[i],
+                            &tmp,
+                            (struct ztier_chunk *)0,
+                            (struct ztier_chunk *)~0);
+        ztier_rb_move_range(&tmp,
+                            &my_ztier_pool->free_lists[i],
+                            (struct ztier_chunk *)0,
+                            (struct ztier_chunk *)~0);
+    }
+
+    printk(KERN_ERR "checking used_pages\n");
+
+    /* sanity check page lists */
+
+    // TODO
+
+    spin_unlock(&my_ztier_pool->lock);
+
+    debug_print_on = false;
+
+    printk(KERN_ERR "... ztier trigger debug done\n");
+
+    return 0;
+}
 
 /* Select a page to attempt to reclaim from the given pool. This is a stateful
  * routine that keeps track of what pages it has previously selected via the
@@ -514,30 +676,32 @@ static struct page *ztier_reclaim_select_page(struct ztier_pool *pool,
                                               int *current_tier,
                                               struct page **current_page)
 {
+    struct page *chosen;
+
     // For each tier starting with *current_tier
     while (*current_tier < NUM_TIERS) {
-        // If *current_page is NULL, then return the last page in the tier.
-        if (!*current_page) {
-            if (list_empty(&pool->used_pages[*current_tier])) {
-                // If the tier is empty move to the next tier and try again.
+        if (list_empty(&pool->used_pages[*current_tier])) {
+            // If the tier is empty move to the next tier and try again.
+            (*current_tier)++;
+            return NULL;
+        } else {
+            chosen = list_last_entry(&pool->used_pages[*current_tier],
+                                            struct page,
+                                            ztier_lru);
+
+            // If this is the same as the last page, increase tier and move on.
+            if (chosen == *current_page) {
                 (*current_tier)++;
-                *current_page = NULL;
-            } else {
-                return *current_page = list_last_entry(&pool->used_pages[*current_tier],
-                                                struct page,
-                                                ztier_lru);
+                return NULL;
             }
-        }
-        // Otherwise, move backward in the list of used pages until either we
-        // reach the beginning of the list.
-        else {
-            if ((*current_page)->ztier_lru.prev == &pool->used_pages[*current_tier]) {
-                // Reached the beginning of the list; move to next tier
-                (*current_tier)++;
-                *current_page = NULL;
-            } else {
-                return *current_page = list_prev_entry(*current_page, ztier_lru);
-            }
+
+            // Keep track of our choice
+            *current_page = chosen;
+
+            // move to head of list before returning
+            list_rotate_left(&pool->used_pages[*current_tier]);
+
+            return chosen;
         }
     }
 
@@ -558,6 +722,7 @@ static void ztier_page_chunks_under_reclaim(struct ztier_pool *pool,
 
     BUG_ON(tier >= NUM_TIERS);
     BUG_ON(!vaddr);
+    BUG_ON(!(page->ztier_private & RECLAIM_FLAG));
 
     ztier_rb_move_range(&pool->free_lists[tier],
                         &pool->under_reclaim,
@@ -579,6 +744,7 @@ static void ztier_page_chunks_from_under_reclaim(struct ztier_pool *pool,
 
     BUG_ON(tier >= NUM_TIERS);
     BUG_ON(!vaddr);
+    BUG_ON(page->ztier_private & RECLAIM_FLAG);
 
     ztier_rb_move_range(&pool->under_reclaim,
                         &pool->free_lists[tier],
@@ -604,6 +770,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
     BUG_ON(!page);
     BUG_ON(!vaddr);
     BUG_ON(tier >= NUM_TIERS);
+    BUG_ON(!(page->ztier_private & RECLAIM_FLAG));
 
     spin_lock(&pool->lock);
     lock_holder = 0x1;
@@ -628,7 +795,7 @@ static void ztier_attempt_evict_page_chunks(struct ztier_pool *pool,
 
             spin_lock(&pool->lock);
             lock_holder = 0x2;
-        } else 
+        } else
         if ( ((*(unsigned int *)handle) != 0xAAAAAAAA &&
               (*(unsigned int *)handle) != 0xCCCCCCCC))
         {
@@ -659,6 +826,7 @@ static bool ztier_page_chunks_reclaimed(struct ztier_pool *pool,
     BUG_ON(tier >= NUM_TIERS);
     BUG_ON(!page);
     BUG_ON(!vaddr);
+    BUG_ON(!(page->ztier_private & RECLAIM_FLAG));
 
     // for each chunk in the page, if that chunk is not in under_reclaim,
     // return false. Otherwise, proceed.
