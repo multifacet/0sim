@@ -689,6 +689,11 @@ static struct page *ztier_reclaim_select_page(struct ztier_pool *pool,
                                             struct page,
                                             ztier_lru);
 
+            // If the page is already under reclaim, skip it
+            if (chosen->ztier_private & RECLAIM_FLAG) {
+                continue;
+            }
+
             // If this is the same as the last page, increase tier and move on.
             if (chosen == *current_page) {
                 (*current_tier)++;
@@ -1208,7 +1213,7 @@ int ztier_reclaim_page(struct ztier_pool *pool, unsigned int retries)
         BUG_ON(reclaim_tier != current_tier);
         INIT_LIST_HEAD(&page->ztier_lru);
         list_add(&page->ztier_lru, &pool->used_pages[reclaim_tier]);
-        page->ztier_private = reclaim_tier;
+        page->ztier_private &= ~RECLAIM_FLAG;
         ztier_page_chunks_from_under_reclaim(pool, page);
     }
 
