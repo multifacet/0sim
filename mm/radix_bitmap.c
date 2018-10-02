@@ -14,20 +14,6 @@
 #define L1_SIZE (1 << (L1_ORDER - 3))
 
 /*
- * Allocate and initialize a new empty l0 map.
- */
-struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp) {
-    void *pages = __vmalloc(L0_SIZE,
-                            gfp | GFP_ATOMIC | __GFP_ZERO,
-                            PAGE_KERNEL);
-    if (!pages) {
-        return NULL;
-    }
-    //printk(KERN_ERR "l0: %p %lx\n", pages, (unsigned long)L0_SIZE);
-    return (struct radix_bitmap_l0 *)pages;
-}
-
-/*
  * Deallocate the given l0 map.
  */
 void destroy_radix_bitmap_l0(struct radix_bitmap_l0 *l0) {
@@ -46,6 +32,20 @@ void destroy_radix_bitmap_l1(struct radix_bitmap_l1 *l1) {
 ///////////////////////////////////////////////////////////////////////////////
 
 /*
+ * Allocate and initialize a new empty l0 map.
+ */
+struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp) {
+    void *pages = __vmalloc(L0_SIZE,
+                            gfp | GFP_ATOMIC | __GFP_ZERO,
+                            PAGE_KERNEL);
+    if (!pages) {
+        return NULL;
+    }
+    //printk(KERN_ERR "l0: %p %lx\n", pages, (unsigned long)L0_SIZE);
+    return (struct radix_bitmap_l0 *)pages;
+}
+
+/*
  * Allocate and initialize a new empty l1 map.
  */
 struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
@@ -60,19 +60,20 @@ struct radix_bitmap_l1 *mk_radix_bitmap_l1(gfp_t gfp) {
 }
 
 /*
- * Initialize the given radix bitmap struct to a valid empty bitmap.
- *
- * Returns 0 on success and 1 on failure (which indicates OOM).
+ * Initialize the given radix bitmap struct to a valid empty bitmap
+ * using the given L0 bitmap.
  */
-bool radix_bitmap_create(struct radix_bitmap *rb, gfp_t gfp) {
-    rb->l0 = mk_radix_bitmap_l0(gfp);
-    BUG_ON(!rb->l0);
+void radix_bitmap_init(struct radix_bitmap *rb, struct radix_bitmap_l0 *l0) {
+    BUG_ON(!l0);
+    rb->l0 = l0;
     rb->size = L0_SIZE;
-    if(!rb->l0) {
-        return 1;
-    } else {
-        return 0;
-    }
+}
+
+/*
+ * Returns 1 iff the given bitmap is initialized.
+ */
+bool radix_bitmap_is_init(struct radix_bitmap *rb) {
+    return rb->size > 0;
 }
 
 /*

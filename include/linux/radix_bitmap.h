@@ -38,16 +38,25 @@ struct radix_bitmap {
 } __attribute__((packed));
 
 /*
- * Initialize the given radix bitmap struct to a valid empty bitmap.
- *
- * Returns 0 on success and 1 on failure (which indicates OOM).
+ * Initialize the given radix bitmap struct to a valid empty bitmap
+ * using the given L0 bitmap.
  */
-bool radix_bitmap_create(struct radix_bitmap *rb, gfp_t gfp);
+void radix_bitmap_init(struct radix_bitmap *rb, struct radix_bitmap_l0 *l0);
+
+/*
+ * Returns 1 iff the given bitmap is initialized.
+ */
+bool radix_bitmap_is_init(struct radix_bitmap *rb);
 
 /*
  * Destroy the given bitmap and free all of its memory.
  */
 void radix_bitmap_destroy(struct radix_bitmap *rb);
+
+/*
+ * Allocate an L0 bitmap.
+ */
+struct radix_bitmap_l0 *mk_radix_bitmap_l0(gfp_t gfp);
 
 /*
  * Allocate an L1 bitmap.

@@ -183,7 +183,7 @@ struct zswap_tree {
 
 static struct zswap_tree *zswap_trees[MAX_SWAPFILES];
 
-static struct radix_bitmap zswap_zero_bitmap;
+static struct radix_bitmap zswap_zero_bitmap[MAX_SWAPFILES];
 
 /* RCU-protected iteration */
 static LIST_HEAD(zswap_pools);
@@ -221,6 +221,7 @@ static void zswap_update_total_size(void)
 {
     struct zswap_pool *pool;
     u64 total = 0;
+    int i;
 
     rcu_read_lock();
 
@@ -229,7 +230,11 @@ static void zswap_update_total_size(void)
 
     rcu_read_unlock();
 
-    total += zswap_zero_bitmap.size;
+    for (i = 0; i < MAX_SWAPFILES; ++i) {
+        if (radix_bitmap_is_init(&zswap_zero_bitmap[i])) {
+            total += zswap_zero_bitmap[i].size;
+        }
+    }
 
     zswap_pool_total_size = total;
 }
@@ -915,7 +920,9 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
     /* find and ref zswap entry */
     spin_lock(&tree->lock);
     lock_holder = 1;
-    is_zeroed = radix_bitmap_get(&zswap_zero_bitmap,
+    is_zeroed =
+        radix_bitmap_is_init(&zswap_zero_bitmap[swp_type(swpentry)]) &&
+        radix_bitmap_get(&zswap_zero_bitmap[swp_type(swpentry)],
             RADIX_BITMAP_VAL_MASK(offset));
     entry = zswap_entry_find_get(&tree->rbroot, offset);
     lock_holder = 0x1A;
@@ -1041,7 +1048,8 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 {
     struct zswap_tree *tree = zswap_trees[type];
     struct zswap_entry *entry, *dupentry;
-    struct radix_bitmap_l1 *alloc_l1_bimap;
+    struct radix_bitmap_l0 *alloc_l0_bitmap;
+    struct radix_bitmap_l1 *alloc_l1_bitmap;
     struct crypto_comp *tfm;
     int ret;
     unsigned int dlen = PAGE_SIZE, len;
@@ -1068,7 +1076,22 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
     spin_lock(&tree->lock);
     lock_holder = 5;
 
-    radix_bitmap_unset(&zswap_zero_bitmap,
+    if (!radix_bitmap_is_init(&zswap_zero_bitmap[type])) {
+        spin_unlock(&tree->lock);
+
+        alloc_l0_bitmap = mk_radix_bitmap_l0(
+                    __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM);
+
+        if (!alloc_l0_bitmap) {
+            pr_err("bitmap creation failed\n");
+            return -ENOMEM;
+        }
+
+        spin_lock(&tree->lock);
+        radix_bitmap_init(&zswap_zero_bitmap[type], alloc_l0_bitmap);
+    }
+
+    radix_bitmap_unset(&zswap_zero_bitmap[type],
             RADIX_BITMAP_VAL_MASK(offset));
 
     // May need to remove an entry from the tree
@@ -1102,7 +1125,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
         lock_holder = 4;
 
         // Set a bit in the bitmap
-        bitmap_res = radix_bitmap_set(&zswap_zero_bitmap,
+        bitmap_res = radix_bitmap_set(&zswap_zero_bitmap[type],
                RADIX_BITMAP_VAL_MASK(offset),
                NULL);
 
@@ -1112,10 +1135,10 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 
             // Attempt to reserve some space. We need to do this without
             // the lock to avoid deadlock.
-            alloc_l1_bimap = mk_radix_bitmap_l1(
+            alloc_l1_bitmap = mk_radix_bitmap_l1(
                     __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM);
 
-            if (!alloc_l1_bimap) {
+            if (!alloc_l1_bitmap) {
                 //printk(KERN_INFO "ENOMEM 4\n");
                 kunmap_atomic(src);
                 return -ENOMEM;
@@ -1125,9 +1148,9 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
             lock_holder = 0x4A2;
 
             // Retry set
-            bitmap_res = radix_bitmap_set(&zswap_zero_bitmap,
+            bitmap_res = radix_bitmap_set(&zswap_zero_bitmap[type],
                    RADIX_BITMAP_VAL_MASK(offset),
-                   alloc_l1_bimap);
+                   alloc_l1_bitmap);
         }
 
         lock_holder = 0x4A3;
@@ -1268,8 +1291,10 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
     /* find */
     spin_lock(&tree->lock);
     lock_holder = 7;
-    is_zeroed = radix_bitmap_get(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(offset));
+    is_zeroed =
+        radix_bitmap_is_init(&zswap_zero_bitmap[type]) &&
+        radix_bitmap_get(&zswap_zero_bitmap[type],
+                RADIX_BITMAP_VAL_MASK(offset));
     entry = zswap_entry_find_get(&tree->rbroot, offset);
     lock_holder = 0x7A;
     spin_unlock(&tree->lock);
@@ -1319,8 +1344,10 @@ static void zswap_frontswap_invalidate_page(unsigned type, pgoff_t offset)
     spin_lock(&tree->lock);
     lock_holder = 9;
     // Invalidate in the bitmap
-    radix_bitmap_unset(&zswap_zero_bitmap,
-            RADIX_BITMAP_VAL_MASK(offset));
+    if (radix_bitmap_is_init(&zswap_zero_bitmap[type]) {
+        radix_bitmap_unset(&zswap_zero_bitmap[type],
+                RADIX_BITMAP_VAL_MASK(offset));
+    }
 
     // Then the rb tree
     entry = zswap_rb_search(&tree->rbroot, offset);
@@ -1353,9 +1380,9 @@ static void zswap_frontswap_invalidate_area(unsigned type)
     spin_lock(&tree->lock);
     lock_holder = 0xA;
     // Invalidate the entire bitmap
-    // FIXME: we should really do this per-swapfile but for now,
-    // we assume there is only one...
-    radix_bitmap_clear(&zswap_zero_bitmap);
+    if (radix_bitmap_is_init(&zswap_zero_bitmap[type]) {
+        radix_bitmap_clear(&zswap_zero_bitmap[type]);
+    }
 
     /* walk the tree and free everything */
     rbtree_postorder_for_each_entry_safe(entry, n, &tree->rbroot, rbnode)
@@ -1466,7 +1493,7 @@ static void __exit zswap_debugfs_exit(void) { }
 static int __init init_zswap(void)
 {
     struct zswap_pool *pool;
-    bool bitmap_res;
+    //bool bitmap_res;
 
     zswap_init_started = true;
 
@@ -1490,11 +1517,18 @@ static int __init init_zswap(void)
 
     list_add(&pool->list, &zswap_pools);
 
+    // Start with a bunch of empty structs (these are pretty small). If you
+    // need to use them, you need to check if they are null and initialize
+    // them first.
+    memset(zswap_zero_bitmap, 0, MAX_SWAPFILES * sizeof(struct radix_bitmap));
+
+    /*
     bitmap_res = radix_bitmap_create(&zswap_zero_bitmap, __GFP_RECLAIM);
     if (bitmap_res) {
         pr_err("bitmap creation failed\n");
         goto cache_fail;
     }
+    */
 
     frontswap_register_ops(&zswap_frontswap_ops);
     if (zswap_debugfs_init())
