@@ -884,11 +884,19 @@ static int zswap_writeback_entry(struct zpool *pool, unsigned long handle)
     swpentry = zhdr->swpentry; /* here */
     zpool_unmap_handle(pool, handle);
 
-    /* ztier fills freed headers with 0xAA bytes */
+    /* ztier fills freed headers with 0xAA or 0xCC bytes */
     if ((((unsigned long)swpentry.val) & 0xFFFFFFFF) == 0xAAAAAAAA
         || (((unsigned long)swpentry.val) & 0xFFFFFFFF) == 0xCCCCCCCC) {
         // entry was previously invalidated
         return 0;
+    }
+
+    // HACK: there is a race condition in zswap if a block is allocated from
+    // the zpool but is chosen for writeback before the compressed data is
+    // placed into it. In this case, ztier will have written 0xBBBBB... into the
+    // page, so just return an error.
+    if ((((unsigned long)swpentry.val) & 0xFFFFFFFF) == 0xBBBBBBBB) {
+        return -EINVAL;
     }
 
     if (swap_info[0]->max <= swp_offset(swpentry)
