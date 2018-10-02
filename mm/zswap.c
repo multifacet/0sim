@@ -1083,7 +1083,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
                     __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM);
 
         if (!alloc_l0_bitmap) {
-            pr_err("bitmap creation failed\n");
+            pr_err("bitmap creation failed, type %d\n", type);
             return -ENOMEM;
         }
 
@@ -1344,7 +1344,7 @@ static void zswap_frontswap_invalidate_page(unsigned type, pgoff_t offset)
     spin_lock(&tree->lock);
     lock_holder = 9;
     // Invalidate in the bitmap
-    if (radix_bitmap_is_init(&zswap_zero_bitmap[type]) {
+    if (radix_bitmap_is_init(&zswap_zero_bitmap[type])) {
         radix_bitmap_unset(&zswap_zero_bitmap[type],
                 RADIX_BITMAP_VAL_MASK(offset));
     }
@@ -1380,7 +1380,7 @@ static void zswap_frontswap_invalidate_area(unsigned type)
     spin_lock(&tree->lock);
     lock_holder = 0xA;
     // Invalidate the entire bitmap
-    if (radix_bitmap_is_init(&zswap_zero_bitmap[type]) {
+    if (radix_bitmap_is_init(&zswap_zero_bitmap[type])) {
         radix_bitmap_clear(&zswap_zero_bitmap[type]);
     }
 
