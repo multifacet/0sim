@@ -737,6 +737,15 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, gva_t addr, u32 error_code,
 		return 0;
 	}
 
+    // At this point, we know the page fault was caused by the host (because
+    // otherwise, it would have been injected into the guest above.
+    //
+    // The extra page walk that will happen after we handle this page fault
+    // will be measured as increased latency in the guest. Instead, we want
+    // to offset that latency. We set this flag, which is tested when we adjust
+    // the TSC.
+    kvm_vcpu_set_pf_flag(vcpu);
+
 	vcpu->arch.write_fault_to_shadow_pgtable = false;
 
 	is_self_change_mapping = FNAME(is_self_change_mapping)(vcpu,

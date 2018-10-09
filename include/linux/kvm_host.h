@@ -222,6 +222,49 @@ struct kvm_mmio_fragment {
 	unsigned len;
 };
 
+// Indicates that the vcpu is running.
+#define ZEROSIM_VCPU_RUNNING 0
+
+// Indicates that the vcpu executed a `hlt` instruction, which is being emulated.
+#define ZEROSIM_VCPU_HLT 1
+
+// Indicates that the vcpu is in the hypervisor for a reason other than a `hlt` instruction.
+#define ZEROSIM_VCPU_STALLED 2
+
+// Controls the behavior of 0sim timing features. There is one of these for
+// each vcpu, and it is kept in the `struct kvm_vcpu`.
+struct zerosim_timing_ctrl {
+    // The timestamp since the vcpu paused. This is used to update
+    // `tsc_offset` by taking the difference with a later timestamp.
+    unsigned long long start_missing;
+
+    // 0 means no update should be made to `tsc_offset`, so that the value of
+    // `tsc_offset` is loaded into the VMCS without changes. This could be
+    // because the vcpu is currently running.
+    bool use_start_missing;
+
+    // The TSC offset of the guest _that is too be loaded_ into the VMCS just
+    // before `vmenter`.
+    s64 tsc_offset;
+
+    /*
+     * Set to true if we handled a page fault since the last reset.
+     */
+    bool handled_pf;
+
+    // The state of this vcpu;
+    int state;
+};
+
+static inline void init_zerosim_timing_ctrl(struct zerosim_timing_ctrl *ztc)
+{
+    ztc->handled_pf = 0;
+    ztc->start_missing = 0;
+    ztc->use_start_missing = 1;
+    ztc->tsc_offset = 0;
+    ztc->state = ZEROSIM_VCPU_STALLED;
+}
+
 struct kvm_vcpu {
 	struct kvm *kvm;
 #ifdef CONFIG_PREEMPT_NOTIFIERS
@@ -282,7 +325,71 @@ struct kvm_vcpu {
 #endif
 	bool preempted;
 	struct kvm_vcpu_arch arch;
+
+    struct zerosim_timing_ctrl zerosim;
 };
+
+/*
+ * Sets the `handled_pf` flag in the given vcpu.
+ */
+static inline void kvm_vcpu_set_pf_flag(struct kvm_vcpu *vcpu)
+{
+    vcpu->zerosim.handled_pf = 1;
+}
+
+/*
+ * Returns true if there was a page fault that reset the flag since the last
+ * time we checked. Then resets the flag.
+ */
+static inline bool kvm_vcpu_get_and_reset_pf_flag(struct kvm_vcpu *vcpu)
+{
+    bool flag = vcpu->zerosim.handled_pf;
+    vcpu->zerosim.handled_pf = 0;
+    return flag;
+}
+
+/*
+ * Returns the offset considering both the present offset and the start_missing
+ * time, but using this host processor's TSC for base time.
+ */
+static inline s64 kvm_vcpu_compute_effective_tsc_offset(struct kvm_vcpu *vcpu)
+{
+    // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
+
+    if (vcpu->zerosim.state == ZEROSIM_VCPU_STALLED) {
+        u64 now = rdtsc();
+        if (now > vcpu->zerosim.start_missing) {
+            return vcpu->zerosim.tsc_offset - (now - vcpu->zerosim.start_missing);
+        }
+        return vcpu->zerosim.tsc_offset;
+    } else if (vcpu->zerosim.state == ZEROSIM_VCPU_HLT
+            || vcpu->zerosim.state == ZEROSIM_VCPU_RUNNING)
+    {
+        return vcpu->zerosim.tsc_offset;
+    } else {
+        BUG();
+    }
+}
+
+/*
+ * Returns the guest time, accounting for the current state of the vcpu.
+ */
+static inline u64 kvm_vcpu_compute_effective_tsc(struct kvm_vcpu *vcpu) {
+    // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
+
+    if (vcpu->zerosim.state == ZEROSIM_VCPU_STALLED) {
+        // Guest time stopped when the stall began.
+        return kvm_scale_tsc(vcpu, vcpu->zerosim.start_missing)
+            + vcpu->zerosim.tsc_offset;
+    } else if (vcpu->zerosim.state == ZEROSIM_VCPU_HLT
+            || vcpu->zerosim.state == ZEROSIM_VCPU_RUNNING)
+    {
+        // Guest time is currently running.
+        return kvm_scale_tsc(vcpu, rdtsc()) + vcpu->zerosim.tsc_offset;
+    } else {
+        BUG();
+    }
+}
 
 static inline int kvm_vcpu_exiting_guest_mode(struct kvm_vcpu *vcpu)
 {

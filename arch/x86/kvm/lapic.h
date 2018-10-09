@@ -16,6 +16,13 @@ struct kvm_timer {
 	u64 tscdeadline;
 	u64 expired_tscdeadline;
 	atomic_t pending;			/* accumulated triggered timers */
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    // (markm) The _guest_ TSC by which the timer should have expired. Used to
+    // make sure that hardware events arrive at the same rate in the
+    // simulation as in the host.
+    u64 guest_tscdeadline;
+#endif
 };
 
 struct kvm_lapic {

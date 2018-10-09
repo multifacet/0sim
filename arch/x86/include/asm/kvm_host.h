@@ -911,6 +911,11 @@ struct kvm_x86_ops {
 	void (*post_block)(struct kvm_vcpu *vcpu);
 	int (*update_pi_irte)(struct kvm *kvm, unsigned int host_irq,
 			      uint32_t guest_irq, bool set);
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    /* Returns true if TSC offsetting is enabled. False otherwise. */
+    bool (*tsc_offsetting_enabled)(void);
+#endif
 };
 
 struct kvm_arch_async_pf {

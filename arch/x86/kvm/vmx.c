@@ -51,6 +51,8 @@
 #include "trace.h"
 #include "pmu.h"
 
+#include "x86_timing.h"
+
 #define __ex(x) __kvm_handle_fault_on_reboot(x)
 #define __ex_clear(x, reg) \
 	____kvm_handle_fault_on_reboot(x, "xor " reg " , " reg)
@@ -106,6 +108,11 @@ static u64 __read_mostly host_xss;
 
 static bool __read_mostly enable_pml = 1;
 module_param_named(pml, enable_pml, bool, S_IRUGO);
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static bool __read_mostly enable_tsc_offsetting = true;
+module_param(enable_tsc_offsetting, bool, 0644);
+#endif
 
 #define KVM_VMX_TSC_MULTIPLIER_MAX     0xffffffffffffffffULL
 
@@ -2013,6 +2020,11 @@ static void vmx_vcpu_pi_load(struct kvm_vcpu *vcpu, int cpu)
 	} while (cmpxchg(&pi_desc->control, old.control,
 			new.control) != old.control);
 }
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static int prev_cpu = -1;
+#endif
+
 /*
  * Switches to specified vcpu, until a matching vcpu_put(), but assumes
  * vcpu mutex is already taken.
@@ -2062,10 +2074,27 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		rdmsrl(MSR_IA32_SYSENTER_ESP, sysenter_esp);
 		vmcs_writel(HOST_IA32_SYSENTER_ESP, sysenter_esp); /* 22.2.3 */
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+        // Keep track of which cpu the vcpu is scheduled on. Warn if we switch.
+        // NOTE: this is a bit fake since it is a global, but a multicore VM
+        // should ideally have a per-vcpu value.
+		if (prev_cpu == -1) {
+			prev_cpu = cpu;
+		} else {
+			if (prev_cpu != cpu) {
+				printk(KERN_WARNING "switching cpus %d -> %d\n", prev_cpu, cpu);
+			}
+		}
+
+		prev_cpu = cpu;
+#endif
+
 		/* Setup TSC multiplier */
-		if (cpu_has_vmx_tsc_scaling())
-			vmcs_write64(TSC_MULTIPLIER,
-				     vcpu->arch.tsc_scaling_ratio);
+		if (cpu_has_vmx_tsc_scaling()) {
+            printk(KERN_WARNING "Changing TSC multiplier on vcpu %d.\n", vcpu->vcpu_id);
+            vmcs_write64(TSC_MULTIPLIER,
+                     vcpu->arch.tsc_scaling_ratio);
+		}
 
 		vmx->loaded_vmcs->cpu = cpu;
 	}
@@ -2430,6 +2459,23 @@ static void vmx_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 
 static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 {
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    u64 offset;
+
+    if (enable_tsc_offsetting) {
+        printk(KERN_WARNING "not adjusting tsc offset. adjustment: %lld\n", adjustment);
+    } else {
+        offset = vmcs_read64(TSC_OFFSET);
+
+        vmcs_write64(TSC_OFFSET, offset + adjustment);
+        if (is_guest_mode(vcpu)) {
+            /* Even when running L2, the adjustment needs to apply to L1 */
+            to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
+        } else
+            trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
+                           offset + adjustment);
+    }
+#else
 	u64 offset = vmcs_read64(TSC_OFFSET);
 
 	vmcs_write64(TSC_OFFSET, offset + adjustment);
@@ -2439,6 +2485,38 @@ static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 	} else
 		trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
 					   offset + adjustment);
+#endif
+}
+
+static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adjustment)
+{
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    u64 offset;
+
+    if (enable_tsc_offsetting) {
+        // Warn if the adjustment is huge (4GHz => warn at ~1min).
+        const s64 too_big = 60l * 4000000000l;
+        if (adjustment >= too_big) {
+            printk(KERN_WARNING "Very large adjustment: %lld\n", adjustment);
+        }
+
+        offset = vmcs_read64(TSC_OFFSET);
+
+        vcpu->zerosim.tsc_offset = offset + adjustment;
+
+        trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset, offset + adjustment);
+    }
+#endif
+}
+
+static void vmx_force_tsc_offset_guest(struct kvm_vcpu *vcpu)
+{
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    if (enable_tsc_offsetting) {
+        vmcs_write64(TSC_OFFSET, vcpu->zerosim.tsc_offset);
+        zerosim_report_guest_offset(vcpu->vcpu_id, vcpu->zerosim.tsc_offset);
+    }
+#endif
 }
 
 static bool guest_cpuid_has_vmx(struct kvm_vcpu *vcpu)
@@ -8062,7 +8140,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		nested_vmx_vmexit(vcpu, exit_reason,
 				  vmcs_read32(VM_EXIT_INTR_INFO),
 				  vmcs_readl(EXIT_QUALIFICATION));
-		return 1;
+        return 1;
 	}
 
 	if (exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY) {
@@ -8070,14 +8148,14 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
 		vcpu->run->fail_entry.hardware_entry_failure_reason
 			= exit_reason;
-		return 0;
+        return 0;
 	}
 
 	if (unlikely(vmx->fail)) {
 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
 		vcpu->run->fail_entry.hardware_entry_failure_reason
 			= vmcs_read32(VM_INSTRUCTION_ERROR);
-		return 0;
+        return 0;
 	}
 
 	/*
@@ -8096,7 +8174,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->internal.ndata = 2;
 		vcpu->run->internal.data[0] = vectoring_info;
 		vcpu->run->internal.data[1] = exit_reason;
-		return 0;
+        return 0;
 	}
 
 	if (unlikely(!cpu_has_virtual_nmis() && vmx->soft_vnmi_blocked &&
@@ -8125,7 +8203,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	else {
 		WARN_ONCE(1, "vmx: unexpected exit reason 0x%x\n", exit_reason);
 		kvm_queue_exception(vcpu, UD_VECTOR);
-		return 1;
+        return 1;
 	}
 }
 
@@ -8493,6 +8571,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long debugctlmsr, cr4;
+    unsigned long long elapsed;
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!cpu_has_virtual_nmis() && vmx->soft_vnmi_blocked))
@@ -8531,6 +8610,25 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	 * case. */
 	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)
 		vmx_set_interrupt_shadow(vcpu, 0);
+
+    // Actually offset guest TSC based on time up to now.
+    // Assumes that the vcpu is pinned to a single host core.
+    if (vcpu->zerosim.use_start_missing) {
+        // Update the start_missing time to account for other sources of overhead.
+        vcpu->zerosim.start_missing -= kvm_vcpu_get_and_reset_pf_flag(vcpu) ?
+            kvm_x86_get_page_fault_time() : 0;
+        vcpu->zerosim.start_missing -= kvm_x86_get_entry_exit_time();
+
+        // Now compute the missing time.
+        elapsed = rdtsc() - vcpu->zerosim.start_missing;
+
+        // Adjust `tsc_offset` but don't actually write the VMCS.
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+    }
+
+    // Update the TSC offset in the VMCS (if offsetting is enabled)
+    vmx_force_tsc_offset_guest(vcpu);
+    vcpu->zerosim.state = ZEROSIM_VCPU_RUNNING;
 
 	atomic_switch_perf_msrs(vmx);
 	debugctlmsr = get_debugctlmsr();
@@ -8658,6 +8756,10 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	loadsegment(es, __USER_DS);
 #endif
 
+    vcpu->zerosim.start_missing = rdtsc();
+    vcpu->zerosim.use_start_missing = 1;
+    vcpu->zerosim.state = ZEROSIM_VCPU_STALLED;
+
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)
 				  | (1 << VCPU_EXREG_RFLAGS)
 				  | (1 << VCPU_EXREG_PDPTR)
@@ -8670,6 +8772,15 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx->loaded_vmcs->launched = 1;
 
 	vmx->exit_reason = vmcs_read32(VM_EXIT_REASON);
+
+    switch (vmx->exit_reason) {
+        case EXIT_REASON_HLT:
+            vcpu->zerosim.state = ZEROSIM_VCPU_HLT;
+            break;
+
+        default:
+            break;
+    }
 
 	/*
 	 * the KVM_REQ_EVENT optimization bit is only on for one entry, and if
@@ -9659,7 +9770,7 @@ static void prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 	/* vmcs12's VM_ENTRY_LOAD_IA32_EFER and VM_ENTRY_IA32E_MODE are
 	 * emulated by vmx_set_efer(), below.
 	 */
-	vm_entry_controls_init(vmx, 
+	vm_entry_controls_init(vmx,
 		(vmcs12->vm_entry_controls & ~VM_ENTRY_LOAD_IA32_EFER &
 			~VM_ENTRY_IA32E_MODE) |
 		(vmcs_config.vmentry_ctrl & ~VM_ENTRY_IA32E_MODE));
@@ -10736,6 +10847,12 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static bool vmx_tsc_offsetting_enabled(void) {
+    return enable_tsc_offsetting;
+}
+#endif
+
 static struct kvm_x86_ops vmx_x86_ops = {
 	.cpu_has_kvm_support = cpu_has_kvm_support,
 	.disabled_by_bios = vmx_disabled_by_bios,
@@ -10856,6 +10973,10 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.pmu_ops = &intel_pmu_ops,
 
 	.update_pi_irte = vmx_update_pi_irte,
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    .tsc_offsetting_enabled = vmx_tsc_offsetting_enabled,
+#endif
 };
 
 static int __init vmx_init(void)
