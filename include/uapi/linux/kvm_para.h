@@ -29,6 +29,10 @@
 #define KVM_HC_CLOCK_PAIRING		9
 #define KVM_HC_SEND_IPI		10
 #define KVM_HC_SCHED_YIELD		11
+#define KVM_HC_X86_HOST_ELAPSED     0x10
+#define KVM_HC_X86_NOP     0x11
+#define KVM_HC_X86_CALIBRATE     0x12
+#define KVM_HC_X86_PF_TIME     0x13
 
 /*
  * hypercalls use architecture specific

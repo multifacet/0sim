@@ -94,6 +94,14 @@ config KVM_MMU_AUDIT
 	 This option adds a R/W kVM module parameter 'mmu_audit', which allows
 	 auditing of KVM MMU events at runtime.
 
+config X86_TSC_OFFSET_HOST_ELAPSED
+	bool "Turn on host elapsed time offsetting for x86 KVM guests"
+	depends on KVM
+	default n
+	---help---
+	  If this option is set, KVM will adjust the TSC offset register for
+	  the guest to hide time spent in the hypervisor.
+
 # OK, it's a little counter-intuitive to do this, but it puts it neatly under
 # the virtualization menu.
 source "drivers/vhost/Kconfig"

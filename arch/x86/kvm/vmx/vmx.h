@@ -521,6 +521,8 @@ static inline void vmx_flush_tlb(struct kvm_vcpu *vcpu, bool invalidate_gpa)
 
 static inline void decache_tsc_multiplier(struct vcpu_vmx *vmx)
 {
+    printk(KERN_WARNING "Changing TSC multiplier on vcpu %d.\n", 
+            vmx->vcpu.vcpu_id);
 	vmx->current_tsc_ratio = vmx->vcpu.arch.tsc_scaling_ratio;
 	vmcs_write64(TSC_MULTIPLIER, vmx->current_tsc_ratio);
 }

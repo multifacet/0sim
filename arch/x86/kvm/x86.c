@@ -27,6 +27,7 @@
 #include "pmu.h"
 #include "hyperv.h"
 #include "lapic.h"
+#include "x86_timing.h"
 
 #include <linux/clocksource.h>
 #include <linux/interrupt.h>
@@ -54,11 +55,14 @@
 #include <linux/sched/stat.h>
 #include <linux/sched/isolation.h>
 #include <linux/mem_encrypt.h>
+#include <linux/proc_fs.h>
+#include <linux/zerosim-params.h>
 
 #include <trace/events/kvm.h>
 
 #include <asm/debugreg.h>
 #include <asm/msr.h>
+#include <asm/delay.h>
 #include <asm/desc.h>
 #include <asm/mce.h>
 #include <linux/kernel_stat.h>
@@ -74,6 +78,48 @@
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+
+#define ZEROSIM_YIELD       0
+#define ZEROSIM_ENOUGH      1
+
+#define ZEROSIM_THRESHOLD_DEFAULT   100000000UL
+#define ZEROSIM_DELAY_DEFAULT       (ZEROSIM_THRESHOLD_DEFAULT / 3)
+
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_d, ZEROSIM_THRESHOLD_DEFAULT, "%lu");
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_delta, ZEROSIM_DELAY_DEFAULT, "%lu");
+ZEROSIM_PROC_CREATE(int, zerosim_skip_halt, false, "%d");
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_multicore_sync, false, "%lu");
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_sync_guest_tsc, false, "%lu");
+ZEROSIM_PROC_CREATE(int, zerosim_verbose, 0, "%d");
+
+static int zerosim_instrumentation_init(void)
+{
+	zerosim_d_ent =
+        proc_create("zerosim_drift_threshold", 0444, NULL, &zerosim_d_ops);
+	zerosim_delta_ent =
+        proc_create("zerosim_delay", 0444, NULL, &zerosim_delta_ops);
+	zerosim_skip_halt_ent =
+        proc_create("zerosim_skip_halt", 0444, NULL, &zerosim_skip_halt_ops);
+	zerosim_multicore_sync_ent =
+        proc_create("zerosim_multicore_sync", 0444, NULL, &zerosim_multicore_sync_ops);
+	zerosim_sync_guest_tsc_ent =
+        proc_create("zerosim_sync_guest_tsc", 0444, NULL, &zerosim_sync_guest_tsc_ops);
+	zerosim_verbose_ent =
+        proc_create("zerosim_verbose", 0444, NULL, &zerosim_verbose_ops);
+
+    zerosim_elapsed_init();
+
+    printk(KERN_WARNING "inited zerosim\n");
+
+	return 0;
+}
+
+// Used as a barrier to sync guest TSCs.
+static atomic_t zerosim_sync_guest_barrier = ATOMIC_INIT(0);
+
+#endif
 
 #define MAX_IO_MSRS 256
 #define KVM_MAX_MCE_BANKS 32
@@ -1927,6 +1973,14 @@ EXPORT_SYMBOL_GPL(kvm_read_l1_tsc);
 
 static void kvm_vcpu_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 {
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    if (kvm_x86_ops->tsc_offsetting_enabled()) {
+        pr_warn("NOR adjusting vcpu %d tsc offset to: %lld\n",
+                vcpu->vcpu_id, offset);
+        return;
+    }
+#endif
+
 	vcpu->arch.tsc_offset = kvm_x86_ops->write_l1_tsc_offset(vcpu, offset);
 }
 
@@ -1952,6 +2006,8 @@ void kvm_write_tsc(struct kvm_vcpu *vcpu, struct msr_data *msr)
 	bool already_matched;
 	u64 data = msr->data;
 	bool synchronizing = false;
+
+    printk(KERN_WARNING "Guest adjusting TSC\n");
 
 	raw_spin_lock_irqsave(&kvm->arch.tsc_write_lock, flags);
 	offset = kvm_compute_tsc_offset(vcpu, data);
@@ -7357,6 +7413,8 @@ int kvm_arch_init(void *opaque)
 		set_hv_tscchange_cb(kvm_hyperv_tsc_notifier);
 #endif
 
+    zerosim_instrumentation_init();
+
 	return 0;
 
 out_free_percpu:
@@ -7389,9 +7447,56 @@ void kvm_arch_exit(void)
 	kmem_cache_destroy(x86_fpu_cache);
 }
 
+s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
+{
+    int i;
+    unsigned long long max_tsc = 0;
+    unsigned long long other_tsc;
+    struct kvm_vcpu *other_vcpu;
+    int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+    s64 max_offset = 0;
+
+    BUG_ON(nvcpus < 1);
+
+	for (i = 0; i < nvcpus; i++) {
+        other_vcpu = vcpu->kvm->vcpus[i];
+        other_tsc = kvm_vcpu_compute_effective_tsc(other_vcpu);
+
+        if (other_tsc > max_tsc) {
+            max_tsc = other_tsc;
+            max_offset = kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
+        }
+    }
+
+    return max_offset;
+}
+
 int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.halt_exits;
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    if (zerosim_verbose & (1<<0)) {
+        printk("vcpu %d hlted\n", vcpu->vcpu_id);
+    }
+
+    switch (zerosim_skip_halt) {
+        case 1:
+            // (markm) Turn halt into nop.
+            return 1;
+
+        case 2:
+            // (markm) Make the vCPU jump forward.
+            vcpu->zerosim.tsc_offset = kvm_get_max_tsc_offset(vcpu);
+
+            // fall through
+
+        case 3:
+            // (markm) Only avoid pausing the TSC.
+            vcpu->zerosim.use_start_missing = 0;
+            break;
+    }
+
+#endif
 	if (lapic_in_kernel(vcpu)) {
 		vcpu->arch.mp_state = KVM_MP_STATE_HALTED;
 		return 1;
@@ -7500,6 +7605,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 {
 	unsigned long nr, a0, a1, a2, a3, ret;
 	int op_64_bit;
+    unsigned long long elapsed;
 
 	if (kvm_hv_hypercall_enabled(vcpu->kvm))
 		return kvm_hv_hypercall(vcpu);
@@ -7520,6 +7626,51 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		a2 &= 0xFFFFFFFF;
 		a3 &= 0xFFFFFFFF;
 	}
+
+    // Can use from any CPL
+    switch (nr) {
+    case KVM_HC_X86_HOST_ELAPSED:
+        elapsed = kvm_x86_get_time(vcpu->vcpu_id);
+
+        /*
+         * Return the value of elapsed to userspace through RAX and RDX. Specifically,
+         * elapsed = (edx << 32) | eax
+         *
+         * The value of EAX is passed as the ret value.
+         */
+        //kvm_register_write(vcpu, VCPU_REGS_RAX, elapsed & 0xffffffff);
+        ret = elapsed & 0xffffffff;
+        kvm_register_write(vcpu, VCPU_REGS_RDX, (elapsed >> 32) & 0xffffffff);
+
+        goto out;
+    break;
+
+    case KVM_HC_X86_CALIBRATE:
+        // Calibrate with the up/down from a0 (rbx)
+        kvm_x86_set_entry_exit_time(a0);
+        ret = 0;
+
+        goto out;
+        break;
+
+    case KVM_HC_X86_PF_TIME:
+        // Calibrate with value from a0 (rbx)
+        kvm_x86_set_page_fault_time(a0);
+        ret = 0;
+
+        goto out;
+        break;
+
+    case KVM_HC_X86_NOP:
+        ret = 0;
+
+        goto out;
+        break;
+
+    default:
+        // Continue below as normal...
+        break;
+    }
 
 	if (kvm_x86_ops->get_cpl(vcpu) != 0) {
 		ret = -KVM_EPERM;
@@ -8485,6 +8636,120 @@ static inline bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
 		!vcpu->arch.apf.halted);
 }
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+
+/*
+ * If the vcpu's virtual time is ahead of other vcpu's virtual time (i.e. it's
+ * clock is running to fast), returns the difference in clocks. Otherwise,
+ * returns 0. To rectify this we slow down this vcpu so that other vcpus can
+ * catch up. We slow down this vcpu by yield the host cpu back to the
+ * scheduler.
+ */
+static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
+{
+    // Rather than attempting to read the remote vcpu's TSC in real time,
+    // we read the current cpu's host TSC and add every vcpu's offset to it to
+    // compare them. This allows us to avoid complicated shenanigans to account
+    // for the time spent in _this function_.
+    //
+    // This depends on the assumption that the host TSC's of all cpus are roughly
+    // synchronized, which may or may not be true.
+
+    unsigned long long local_tsc;
+    int i, nvcpus;
+    unsigned long long min_tsc;
+    unsigned long long other_tsc;
+    int slowest_core;
+
+    // If offsetting is not enabled
+    if (!zerosim_multicore_sync || !kvm_x86_ops->tsc_offsetting_enabled()) {
+        return 0;
+    }
+
+    nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+
+    // If there is only 1 vCPU
+    if (nvcpus == 1) {
+        return 0;
+    }
+
+    // TSC on this core and vcpu
+    local_tsc = kvm_vcpu_compute_effective_tsc(vcpu);
+    min_tsc = local_tsc;
+    slowest_core = vcpu->vcpu_id;
+
+    // Look for the _most_ "behind" vcpu.
+	for (i = 0; i < nvcpus; i++) {
+        other_tsc = kvm_vcpu_compute_effective_tsc(vcpu->kvm->vcpus[i]);
+
+        if (zerosim_verbose & (1<<1)) {
+            printk(KERN_WARNING "[%d / %d] vcpu %d = %llx (%x, %lld)\n",
+                    vcpu->vcpu_id, nvcpus, i, other_tsc,
+                    vcpu->kvm->vcpus[i]->zerosim.state,
+                    vcpu->kvm->vcpus[i]->zerosim.tsc_offset);
+        }
+
+        if (other_tsc < min_tsc) {
+            min_tsc = other_tsc;
+            slowest_core = i;
+        }
+    }
+
+    // If the most "behind" vcpu is not that far behind, we don't care too much.
+    if (min_tsc < (local_tsc - zerosim_d)) {
+        if (zerosim_verbose & (1<<2)) {
+            printk(KERN_WARNING
+                "Stalling vcpu %d on cpu %d, waiting for vcpu %d, %llx, behind by %llu\n",
+                vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc, local_tsc - min_tsc);
+        }
+        return local_tsc - min_tsc;
+    } else {
+        if (zerosim_verbose & (1<<3)) {
+            printk(KERN_WARNING
+                "NOT AHEAD vcpu %d on cpu %d, min vcpu %d, %llx\n",
+                vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc);
+        }
+        return 0;
+    }
+}
+
+// Synchronize this vCPU's TSC by fast-forwarding it to the most advance one if
+// it is not ahead. Then, reset the flag.
+void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
+{
+    int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+    int i;
+
+    s64 new_offset;
+
+    // Wait for everyone to reach the barrier.
+    atomic_inc(&zerosim_sync_guest_barrier);
+    while(atomic_read(&zerosim_sync_guest_barrier) < nvcpus) { }
+
+    // vCPU 0 will always be the one to go update the next tsc_offset for
+    // everyone. Then, they will all get updated just before vmentering.
+    if (vcpu->vcpu_id == 0) {
+        new_offset = kvm_get_max_tsc_offset(vcpu);
+
+        for (i = 0; i < nvcpus; ++i) {
+            vcpu->kvm->vcpus[i]->zerosim.tsc_offset = new_offset;
+            vcpu->kvm->vcpus[i]->zerosim.use_start_missing = 0;
+        }
+
+        // Reset the barrier, allowing everyone to continue.
+        zerosim_sync_guest_tsc = 0;
+        atomic_set(&zerosim_sync_guest_barrier, 0);
+    } else {
+        // Wait for vCPU 0 to finish.
+        while(atomic_read(&zerosim_sync_guest_barrier)) { }
+    }
+
+    printk(KERN_WARNING "Synchronized guest TSCs to %lld\n",
+            vcpu->zerosim.tsc_offset);
+}
+
+#endif
+
 static int vcpu_run(struct kvm_vcpu *vcpu)
 {
 	int r;
@@ -8523,11 +8788,52 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 			++vcpu->stat.signal_exits;
 			break;
 		}
-		if (need_resched()) {
+
+        // Yield the cpu if the scheduler requests it or if we need to slow
+        // down this vcpu. Slowing down the vcpu is necessary whenever it
+        // gets too far ahead of other vcpus.
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+		while (true) {
+            unsigned long long behind;
+
+            if (zerosim_sync_guest_tsc) {
+                kvm_sync_guest_tsc(vcpu);
+            }
+
+            if (need_resched()) {
+                srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
+                cond_resched();
+                vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
+            } else if ((behind = vcpu_is_ahead(vcpu))) {
+                // Might have been in a hlt, but we are stalled now.
+                vcpu->zerosim.state = ZEROSIM_VCPU_STALLED;
+
+                if (zerosim_delta == ZEROSIM_YIELD) {
+                    srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
+                    cond_resched();
+                    vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
+                } else if (zerosim_delta == ZEROSIM_ENOUGH) {
+                    // delay enough to catch up
+                    ndelay(behind);
+                } else {
+                    // delay by delta
+                    ndelay(zerosim_delta);
+                }
+            } else {
+                if (zerosim_verbose & (1<<4)) {
+                    printk(KERN_WARNING "[%d] not pausing\n", vcpu->vcpu_id);
+                }
+
+                break;
+            }
+		}
+#else
+		while (need_resched()) {
 			srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
 			cond_resched();
 			vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
 		}
+#endif
 	}
 
 	srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);

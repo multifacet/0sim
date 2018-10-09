@@ -6321,6 +6321,12 @@ static inline void avic_post_state_restore(struct kvm_vcpu *vcpu)
 	avic_handle_ldr_update(vcpu);
 }
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static bool svm_tsc_offsetting_enabled(void) {
+    return false;
+}
+#endif
+
 static void svm_setup_mce(struct kvm_vcpu *vcpu)
 {
 	/* [63:9] are reserved. */
@@ -7513,6 +7519,10 @@ static struct kvm_x86_ops svm_x86_ops __ro_after_init = {
 	.need_emulation_on_page_fault = svm_need_emulation_on_page_fault,
 
 	.apic_init_signal_blocked = svm_apic_init_signal_blocked,
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    .tsc_offsetting_enabled = svm_tsc_offsetting_enabled,
+#endif
 };
 
 static int __init svm_init(void)

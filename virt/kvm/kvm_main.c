@@ -354,6 +354,8 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	vcpu->preempted = false;
 	vcpu->ready = false;
 	preempt_notifier_init(&vcpu->preempt_notifier, &kvm_preempt_ops);
+
+    init_zerosim_timing_ctrl(&vcpu->zerosim);
 }
 
 void kvm_vcpu_destroy(struct kvm_vcpu *vcpu)

@@ -60,6 +60,7 @@
 #include "vmcs12.h"
 #include "vmx.h"
 #include "x86.h"
+#include "x86_timing.h"
 
 MODULE_AUTHOR("Qumranet");
 MODULE_LICENSE("GPL");
@@ -179,6 +180,11 @@ module_param(ple_window_max, uint, 0444);
 /* Default is SYSTEM mode, 1 for host-guest mode */
 int __read_mostly pt_mode = PT_MODE_SYSTEM;
 module_param(pt_mode, int, S_IRUGO);
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static bool __read_mostly enable_tsc_offsetting = true;
+module_param(enable_tsc_offsetting, bool, 0644);
+#endif
 
 static DEFINE_STATIC_KEY_FALSE(vmx_l1d_should_flush);
 static DEFINE_STATIC_KEY_FALSE(vmx_l1d_flush_cond);
@@ -1377,6 +1383,9 @@ void vmx_vcpu_load_vmcs(struct kvm_vcpu *vcpu, int cpu)
 		rdmsrl(MSR_IA32_SYSENTER_ESP, sysenter_esp);
 		vmcs_writel(HOST_IA32_SYSENTER_ESP, sysenter_esp); /* 22.2.3 */
 
+        printk(KERN_WARNING "vcpu %d switching from cpu %d to cpu %d\n", 
+                vcpu->vcpu_id, vmx->loaded_vmcs->cpu, cpu);
+
 		vmx->loaded_vmcs->cpu = cpu;
 	}
 
@@ -1746,6 +1755,28 @@ static u64 vmx_write_l1_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 				   offset);
 	vmcs_write64(TSC_OFFSET, offset + g_tsc_offset);
 	return offset + g_tsc_offset;
+}
+
+// Updates the offset for the next time we force the TSC.
+static void vmx_zerosim_adjust_tsc_offset(
+        struct kvm_vcpu *vcpu, s64 adjustment)
+{
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    if (enable_tsc_offsetting) {
+        vcpu->zerosim.tsc_offset = 
+            vmx_read_l1_tsc_offset(vcpu) + adjustment;
+    }
+#endif
+}
+
+static void vmx_force_tsc_offset_guest(struct kvm_vcpu *vcpu)
+{
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    if (enable_tsc_offsetting) {
+        vmx_write_l1_tsc_offset(vcpu, vcpu->zerosim.tsc_offset);
+        zerosim_report_guest_offset(vcpu->vcpu_id, vcpu->zerosim.tsc_offset);
+    }
+#endif
 }
 
 /*
@@ -6464,6 +6495,7 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long cr3, cr4;
+    u64 elapsed;
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!enable_vnmi &&
@@ -6535,6 +6567,25 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	 */
 	x86_spec_ctrl_set_guest(vmx->spec_ctrl, 0);
 
+    // Actually offset guest TSC based on time up to now.
+    // Assumes that the vcpu is pinned to a single host core.
+    if (vcpu->zerosim.use_start_missing) {
+        // Update the start_missing time to account for other sources of overhead.
+        vcpu->zerosim.start_missing -= kvm_vcpu_get_and_reset_pf_flag(vcpu) ?
+            kvm_x86_get_page_fault_time() : 0;
+        vcpu->zerosim.start_missing -= kvm_x86_get_entry_exit_time();
+
+        // Now compute the missing time.
+        elapsed = rdtsc() - vcpu->zerosim.start_missing;
+
+        // Adjust `tsc_offset` but don't actually write the VMCS.
+        vmx_zerosim_adjust_tsc_offset(vcpu, -elapsed);
+    }
+
+    // Update the TSC offset in the VMCS (if offsetting is enabled)
+    vmx_force_tsc_offset_guest(vcpu);
+    vcpu->zerosim.state = ZEROSIM_VCPU_RUNNING;
+
 	/* L1D Flush includes CPU buffer clear to mitigate MDS */
 	if (static_branch_unlikely(&vmx_l1d_should_flush))
 		vmx_l1d_flush(vcpu);
@@ -6548,6 +6599,10 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
 				   vmx->loaded_vmcs->launched);
 
 	vcpu->arch.cr2 = read_cr2();
+
+    vcpu->zerosim.start_missing = rdtsc();
+    vcpu->zerosim.use_start_missing = 1;
+    vcpu->zerosim.state = ZEROSIM_VCPU_STALLED;
 
 	/*
 	 * We do not use IBRS in the kernel. If this vCPU has used the
@@ -6623,6 +6678,15 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx->exit_reason = vmx->fail ? 0xdead : vmcs_read32(VM_EXIT_REASON);
 	if ((u16)vmx->exit_reason == EXIT_REASON_MCE_DURING_VMENTRY)
 		kvm_machine_check();
+
+    switch (vmx->exit_reason) {
+        case EXIT_REASON_HLT:
+            vcpu->zerosim.state = ZEROSIM_VCPU_HLT;
+            break;
+
+        default:
+            break;
+    }
 
 	if (vmx->fail || (vmx->exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY))
 		return;
@@ -7728,6 +7792,12 @@ static bool vmx_check_apicv_inhibit_reasons(ulong bit)
 	return supported & BIT(bit);
 }
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static bool vmx_tsc_offsetting_enabled(void) {
+    return enable_tsc_offsetting;
+}
+#endif
+
 static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 	.cpu_has_kvm_support = cpu_has_kvm_support,
 	.disabled_by_bios = vmx_disabled_by_bios,
@@ -7879,6 +7949,10 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 	.nested_get_evmcs_version = NULL,
 	.need_emulation_on_page_fault = vmx_need_emulation_on_page_fault,
 	.apic_init_signal_blocked = vmx_apic_init_signal_blocked,
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    .tsc_offsetting_enabled = vmx_tsc_offsetting_enabled,
+#endif
 };
 
 static void vmx_cleanup_l1d_flush(void)

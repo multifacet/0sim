@@ -40,6 +40,7 @@
 #include "x86.h"
 #include "cpuid.h"
 #include "hyperv.h"
+#include <linux/zerosim-params.h>
 
 #ifndef CONFIG_X86_64
 #define mod_64(x, y) ((x) - (y) * div64_u64(x, y))
@@ -69,6 +70,22 @@ static bool lapic_timer_advance_dynamic __read_mostly;
 #define LAPIC_TIMER_ADVANCE_NS_MAX     5000
 /* step-by-step approximation to mitigate fluctuation */
 #define LAPIC_TIMER_ADVANCE_ADJUST_STEP 8
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+
+ZEROSIM_PROC_CREATE(int, zerosim_lapic_adjust, true, "%d");
+
+static int zerosim_instrumentation_init(void)
+{
+	zerosim_lapic_adjust_ent =
+        proc_create("zerosim_lapic_adjust", 0444, NULL, &zerosim_lapic_adjust_ops);
+
+    printk(KERN_WARNING "inited zerosim LAPIC\n");
+
+	return 0;
+}
+
+#endif
 
 static inline int apic_test_vector(int vec, void *bitmap)
 {
@@ -1601,6 +1618,35 @@ static void apic_timer_expired(struct kvm_lapic *apic)
 	kvm_set_pending_timer(vcpu);
 }
 
+/*
+ *
+ * (markm) Check if the appropriate guest TSC deadline has passed. If it has,
+ * return 0.  Otherwise, return the difference in ns to continue to wait.
+ */
+static u64 should_delay_apic_interrupt(struct kvm_lapic *apic)
+{
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    if (zerosim_lapic_adjust) {
+        struct kvm_timer *ktimer = &apic->lapic_timer;
+        struct kvm_vcpu *vcpu = apic->vcpu;
+        u64 guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
+        unsigned long this_tsc_khz = vcpu->arch.virtual_tsc_khz;
+
+        // Check here if we actually expired all of the guest time. Add time to
+        // the timer and restart it if not (i.e. keep waiting).
+        if (guest_tsc < ktimer->tscdeadline) {
+            u64 difference_ns = (ktimer->tscdeadline - guest_tsc) * 1000000ULL;
+            do_div(difference_ns, this_tsc_khz);
+            return difference_ns;
+        }
+    }
+#endif
+
+    // Do not delay if TSC_OFFSET_HOST_ELAPSED is not set or if LAPIC
+    // adjustment is off or if the TSC deadline has passed.
+    return false;
+}
+
 static void start_sw_tscdeadline(struct kvm_lapic *apic)
 {
 	struct kvm_timer *ktimer = &apic->lapic_timer;
@@ -1707,14 +1753,28 @@ static void start_sw_period(struct kvm_lapic *apic)
 	if (!apic->lapic_timer.period)
 		return;
 
-	if (ktime_after(ktime_get(),
-			apic->lapic_timer.target_expiration)) {
+	if (ktime_after(ktime_get(), apic->lapic_timer.target_expiration)) {
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+        u64 delay = should_delay_apic_interrupt(apic);
+        if (delay) {
+            apic->lapic_timer.target_expiration =
+                ktime_add_ns(apic->lapic_timer.target_expiration, delay);
+        } else {
+            apic_timer_expired(apic);
+
+            if (apic_lvtt_oneshot(apic))
+                return;
+
+            advance_periodic_target_expiration(apic);
+        }
+#else
 		apic_timer_expired(apic);
 
 		if (apic_lvtt_oneshot(apic))
 			return;
 
 		advance_periodic_target_expiration(apic);
+#endif
 	}
 
 	hrtimer_start(&apic->lapic_timer.timer,
@@ -1814,6 +1874,21 @@ out:
 void kvm_lapic_expired_hv_timer(struct kvm_vcpu *vcpu)
 {
 	struct kvm_lapic *apic = vcpu->arch.apic;
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    // If we have not yet reached the TSC deadline, we just restart the timer.
+    // The tscdeadline is already set, so everyone else will just do the right
+    // thing with respect to TSC offsetting.
+    u64 delay = should_delay_apic_interrupt(apic);
+    if (delay) {
+        preempt_disable();
+        apic->lapic_timer.target_expiration =
+            ktime_add_ns(apic->lapic_timer.target_expiration, delay);
+        restart_apic_timer(apic);
+        preempt_enable();
+        return;
+    }
+#endif
 
 	preempt_disable();
 	/* If the preempt notifier has already run, it also called apic_timer_expired */
@@ -2317,6 +2392,18 @@ static enum hrtimer_restart apic_timer_fn(struct hrtimer *data)
 	struct kvm_timer *ktimer = container_of(data, struct kvm_timer, timer);
 	struct kvm_lapic *apic = container_of(ktimer, struct kvm_lapic, lapic_timer);
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    // Check here if we actually expired all of the guest time. Add time to
+    // the timer and restart it if not (i.e. keep waiting).
+    u64 delay = should_delay_apic_interrupt(apic);
+    if (delay) {
+        ktimer->target_expiration =
+            ktime_add_ns(ktimer->target_expiration, delay);
+        hrtimer_add_expires_ns(&ktimer->timer, delay);
+        return HRTIMER_RESTART;
+    }
+#endif
+
 	apic_timer_expired(apic);
 
 	if (lapic_is_periodic(apic)) {
@@ -2789,6 +2876,10 @@ void kvm_lapic_init(void)
 	/* do not patch jump label more than once per second */
 	jump_label_rate_limit(&apic_hw_disabled, HZ);
 	jump_label_rate_limit(&apic_sw_disabled, HZ);
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    zerosim_instrumentation_init();
+#endif
 }
 
 void kvm_lapic_exit(void)

@@ -1256,6 +1256,11 @@ struct kvm_x86_ops {
 
 	bool (*apic_init_signal_blocked)(struct kvm_vcpu *vcpu);
 	int (*enable_direct_tlbflush)(struct kvm_vcpu *vcpu);
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    /* Returns true if TSC offsetting is enabled. False otherwise. */
+    bool (*tsc_offsetting_enabled)(void);
+#endif
 };
 
 struct kvm_arch_async_pf {
