@@ -30,6 +30,7 @@
 #include "assigned-dev.h"
 #include "pmu.h"
 #include "hyperv.h"
+#include "x86_timing.h"
 
 #include <linux/clocksource.h>
 #include <linux/interrupt.h>
@@ -5877,6 +5878,8 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 	unsigned long nr, a0, a1, a2, a3, ret;
 	int op_64_bit, r = 1;
 
+    unsigned long long elapsed;
+
 	kvm_x86_ops->skip_emulated_instruction(vcpu);
 
 	if (kvm_hv_hypercall_enabled(vcpu->kvm))
@@ -5912,6 +5915,17 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		kvm_pv_kick_cpu_op(vcpu->kvm, a0, a1);
 		ret = 0;
 		break;
+    case KVM_HC_X86_HOST_ELAPSED:
+        elapsed = kvm_x86_get_time();
+        kvm_x86_reset_time();
+        printk(KERN_WARNING "host elapsed %llu\n", elapsed);
+
+        /* 
+         * Return the value of elapsed to userspace through RAX and RDX. Specifically,
+         * elapsed = (edx << 32) | eax
+         */
+        kvm_register_write(vcpu, VCPU_REGS_RAX, elapsed & 0xffffffff);
+        kvm_register_write(vcpu, VCPU_REGS_RDX, (elapsed >> 32) & 0xffffffff);
 	default:
 		ret = -KVM_ENOSYS;
 		break;

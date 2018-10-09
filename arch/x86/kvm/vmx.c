@@ -51,6 +51,8 @@
 #include "trace.h"
 #include "pmu.h"
 
+#include "x86_timing.h"
+
 #define __ex(x) __kvm_handle_fault_on_reboot(x)
 #define __ex_clear(x, reg) \
 	____kvm_handle_fault_on_reboot(x, "xor " reg " , " reg)
@@ -5853,6 +5855,10 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	u32 error_code;
 	int gla_validity;
 
+    int ret;
+
+    unsigned long long start = rdtsc();
+
 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
 
 	gla_validity = (exit_qualification >> 7) & 0x3;
@@ -5891,7 +5897,11 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.exit_qualification = exit_qualification;
 
-	return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
+    ret = kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
+
+    kvm_x86_elapse_time(rdtsc() - start);
+
+	return ret;
 }
 
 static int handle_ept_misconfig(struct kvm_vcpu *vcpu)

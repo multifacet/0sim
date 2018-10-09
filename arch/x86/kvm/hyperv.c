@@ -24,9 +24,11 @@
 #include "x86.h"
 #include "lapic.h"
 #include "hyperv.h"
+#include "x86_timing.h"
 
 #include <linux/kvm_host.h>
 #include <trace/events/kvm.h>
+#include <linux/printk.h>
 
 #include "trace.h"
 
@@ -349,6 +351,8 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	uint16_t code, rep_idx, rep_cnt, res = HV_STATUS_SUCCESS, rep_done = 0;
 	bool fast, longmode;
 
+    unsigned long long elapsed;
+
 	/*
 	 * hypercall generates UD from non zero cpl and real mode
 	 * per HYPER-V spec
@@ -387,6 +391,19 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HV_X64_HV_NOTIFY_LONG_SPIN_WAIT:
 		kvm_vcpu_on_spin(vcpu);
 		break;
+    case HV_X64_HV_GET_HOST_ELAPSED:
+        elapsed = kvm_x86_get_time();
+        kvm_x86_reset_time();
+        printk(KERN_WARNING "host elapsed %llu\n", elapsed);
+
+        /* 
+         * Return the value of elapsed to userspace through RAX and RDX. Specifically,
+         * elapsed = (edx << 32) | eax
+         */
+        kvm_register_write(vcpu, VCPU_REGS_RAX, elapsed & 0xffffffff);
+        kvm_register_write(vcpu, VCPU_REGS_RDX, (elapsed >> 32) & 0xffffffff);
+
+        break;
 	default:
 		res = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;

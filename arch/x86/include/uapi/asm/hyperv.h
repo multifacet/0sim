@@ -227,6 +227,7 @@
 
 /* Declare the various hypercall operations. */
 #define HV_X64_HV_NOTIFY_LONG_SPIN_WAIT		0x0008
+#define HV_X64_HV_GET_HOST_ELAPSED		0x0009
 
 #define HV_X64_MSR_APIC_ASSIST_PAGE_ENABLE		0x00000001
 #define HV_X64_MSR_APIC_ASSIST_PAGE_ADDRESS_SHIFT	12
