@@ -394,7 +394,6 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
     case HV_X64_HV_GET_HOST_ELAPSED:
         elapsed = kvm_x86_get_time();
         kvm_x86_reset_time();
-        printk(KERN_WARNING "host elapsed %llu\n", elapsed);
 
         /* 
          * Return the value of elapsed to userspace through RAX and RDX. Specifically,

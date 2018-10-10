@@ -5906,7 +5906,6 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
     if (nr == KVM_HC_X86_HOST_ELAPSED) {
         elapsed = kvm_x86_get_time();
         kvm_x86_reset_time();
-        pr_err("host elapsed %llu\n", elapsed);
 
         /* 
          * Return the value of elapsed to userspace through RAX and RDX. Specifically,
