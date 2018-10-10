@@ -5857,8 +5857,6 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 
     int ret;
 
-    unsigned long long start = rdtsc();
-
 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
 
 	gla_validity = (exit_qualification >> 7) & 0x3;
@@ -5898,8 +5896,6 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	vcpu->arch.exit_qualification = exit_qualification;
 
     ret = kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
-
-    kvm_x86_elapse_time(rdtsc() - start);
 
 	return ret;
 }
@@ -8052,6 +8048,9 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	u32 exit_reason = vmx->exit_reason;
 	u32 vectoring_info = vmx->idt_vectoring_info;
 
+    int ret;
+    unsigned long long start = rdtsc();
+
 	trace_kvm_exit(exit_reason, vcpu, KVM_ISA_VMX);
 
 	/*
@@ -8065,13 +8064,17 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vmx_flush_pml_buffer(vcpu);
 
 	/* If guest state is invalid, start emulating */
-	if (vmx->emulation_required)
-		return handle_invalid_guest_state(vcpu);
+	if (vmx->emulation_required) {
+		ret = handle_invalid_guest_state(vcpu);
+        kvm_x86_elapse_time(rdtsc() - start);
+        return ret;
+    }
 
 	if (is_guest_mode(vcpu) && nested_vmx_exit_handled(vcpu)) {
 		nested_vmx_vmexit(vcpu, exit_reason,
 				  vmcs_read32(VM_EXIT_INTR_INFO),
 				  vmcs_readl(EXIT_QUALIFICATION));
+        kvm_x86_elapse_time(rdtsc() - start);
 		return 1;
 	}
 
@@ -8080,6 +8083,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
 		vcpu->run->fail_entry.hardware_entry_failure_reason
 			= exit_reason;
+        kvm_x86_elapse_time(rdtsc() - start);
 		return 0;
 	}
 
@@ -8087,6 +8091,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
 		vcpu->run->fail_entry.hardware_entry_failure_reason
 			= vmcs_read32(VM_INSTRUCTION_ERROR);
+        kvm_x86_elapse_time(rdtsc() - start);
 		return 0;
 	}
 
@@ -8106,6 +8111,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->internal.ndata = 2;
 		vcpu->run->internal.data[0] = vectoring_info;
 		vcpu->run->internal.data[1] = exit_reason;
+        kvm_x86_elapse_time(rdtsc() - start);
 		return 0;
 	}
 
@@ -8130,11 +8136,15 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	}
 
 	if (exit_reason < kvm_vmx_max_exit_handlers
-	    && kvm_vmx_exit_handlers[exit_reason])
-		return kvm_vmx_exit_handlers[exit_reason](vcpu);
+	    && kvm_vmx_exit_handlers[exit_reason]) {
+		ret = kvm_vmx_exit_handlers[exit_reason](vcpu);
+        kvm_x86_elapse_time(rdtsc() - start);
+        return ret;
+    }
 	else {
 		WARN_ONCE(1, "vmx: unexpected exit reason 0x%x\n", exit_reason);
 		kvm_queue_exception(vcpu, UD_VECTOR);
+        kvm_x86_elapse_time(rdtsc() - start);
 		return 1;
 	}
 }

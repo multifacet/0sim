@@ -5902,6 +5902,25 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		a3 &= 0xFFFFFFFF;
 	}
 
+    // Can use from any CPL
+    if (nr == KVM_HC_X86_HOST_ELAPSED) {
+        elapsed = kvm_x86_get_time();
+        kvm_x86_reset_time();
+        pr_err("host elapsed %llu\n", elapsed);
+
+        /* 
+         * Return the value of elapsed to userspace through RAX and RDX. Specifically,
+         * elapsed = (edx << 32) | eax
+         *
+         * The value of EAX is passed as the ret value.
+         */
+        //kvm_register_write(vcpu, VCPU_REGS_RAX, elapsed & 0xffffffff);
+        ret = elapsed & 0xffffffff;
+        kvm_register_write(vcpu, VCPU_REGS_RDX, (elapsed >> 32) & 0xffffffff);
+
+        goto out;
+    }
+
 	if (kvm_x86_ops->get_cpl(vcpu) != 0) {
 		ret = -KVM_EPERM;
 		goto out;
@@ -5915,17 +5934,6 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		kvm_pv_kick_cpu_op(vcpu->kvm, a0, a1);
 		ret = 0;
 		break;
-    case KVM_HC_X86_HOST_ELAPSED:
-        elapsed = kvm_x86_get_time();
-        kvm_x86_reset_time();
-        printk(KERN_WARNING "host elapsed %llu\n", elapsed);
-
-        /* 
-         * Return the value of elapsed to userspace through RAX and RDX. Specifically,
-         * elapsed = (edx << 32) | eax
-         */
-        kvm_register_write(vcpu, VCPU_REGS_RAX, elapsed & 0xffffffff);
-        kvm_register_write(vcpu, VCPU_REGS_RDX, (elapsed >> 32) & 0xffffffff);
 	default:
 		ret = -KVM_ENOSYS;
 		break;
