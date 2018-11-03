@@ -2015,6 +2015,9 @@ static void vmx_vcpu_pi_load(struct kvm_vcpu *vcpu, int cpu)
 	} while (cmpxchg(&pi_desc->control, old.control,
 			new.control) != old.control);
 }
+
+static int prev_cpu = -1;
+
 /*
  * Switches to specified vcpu, until a matching vcpu_put(), but assumes
  * vcpu mutex is already taken.
@@ -2064,10 +2067,23 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		rdmsrl(MSR_IA32_SYSENTER_ESP, sysenter_esp);
 		vmcs_writel(HOST_IA32_SYSENTER_ESP, sysenter_esp); /* 22.2.3 */
 
+		if (prev_cpu == -1) {
+			prev_cpu = cpu;
+		} else {
+			if (prev_cpu != cpu) {
+				printk(KERN_WARNING "switching cpus %d -> %d\n", prev_cpu, cpu);
+			}
+		}
+
 		/* Setup TSC multiplier */
-		if (cpu_has_vmx_tsc_scaling())
-			vmcs_write64(TSC_MULTIPLIER,
-				     vcpu->arch.tsc_scaling_ratio);
+		if (cpu_has_vmx_tsc_scaling()) {
+			if (prev_cpu != cpu) {
+				vmcs_write64(TSC_MULTIPLIER,
+					     vcpu->arch.tsc_scaling_ratio);
+			}
+		}
+
+		prev_cpu = cpu;
 
 		vmx->loaded_vmcs->cpu = cpu;
 	}
@@ -2432,15 +2448,32 @@ static void vmx_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 
 static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 {
-	u64 offset = vmcs_read64(TSC_OFFSET);
+	printk(KERN_WARNING "adjust tsc offset\n");
+	//u64 offset = vmcs_read64(TSC_OFFSET);
 
-	vmcs_write64(TSC_OFFSET, offset + adjustment);
-	if (is_guest_mode(vcpu)) {
-		/* Even when running L2, the adjustment needs to apply to L1 */
-		to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
-	} else
-		trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
-					   offset + adjustment);
+	//vmcs_write64(TSC_OFFSET, offset + adjustment);
+	//if (is_guest_mode(vcpu)) {
+	//	/* Even when running L2, the adjustment needs to apply to L1 */
+	//	to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
+	//} else
+	//	trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
+	//				   offset + adjustment);
+}
+
+static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adjustment)
+{
+	u64 offset = vmcs_read64(TSC_OFFSET);
+	u64 mult = vmcs_read64(TSC_MULTIPLIER);
+	printk(KERN_INFO "adjust tsc offset %ld, mult %ld\n", offset, mult);
+
+	//TODO: uncomment these
+	//vmcs_write64(TSC_OFFSET, offset + adjustment);
+	//if (is_guest_mode(vcpu)) {
+	//	/* Even when running L2, the adjustment needs to apply to L1 */
+	//	to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
+	//} else
+	//	trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
+	//				   offset + adjustment);
 }
 
 static bool guest_cpuid_has_vmx(struct kvm_vcpu *vcpu)
@@ -8069,7 +8102,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		ret = handle_invalid_guest_state(vcpu);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        kvm_x86_ops->adjust_tsc_offset_guest(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
         return ret;
     }
 
@@ -8079,7 +8112,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 				  vmcs_readl(EXIT_QUALIFICATION));
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        kvm_x86_ops->adjust_tsc_offset_guest(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
 		return 1;
 	}
 
@@ -8090,7 +8123,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 			= exit_reason;
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        kvm_x86_ops->adjust_tsc_offset_guest(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
 		return 0;
 	}
 
@@ -8100,7 +8133,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 			= vmcs_read32(VM_INSTRUCTION_ERROR);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        kvm_x86_ops->adjust_tsc_offset_guest(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
 		return 0;
 	}
 
@@ -8122,7 +8155,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->internal.data[1] = exit_reason;
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        kvm_x86_ops->adjust_tsc_offset_guest(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
 		return 0;
 	}
 
@@ -8151,7 +8184,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		ret = kvm_vmx_exit_handlers[exit_reason](vcpu);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        kvm_x86_ops->adjust_tsc_offset_guest(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
         return ret;
     }
 	else {
@@ -8159,7 +8192,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		kvm_queue_exception(vcpu, UD_VECTOR);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        kvm_x86_ops->adjust_tsc_offset_guest(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
 		return 1;
 	}
 }
