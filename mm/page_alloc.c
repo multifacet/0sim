@@ -1388,7 +1388,6 @@ void __free_pages_core(struct page *page, unsigned int order)
 	__ClearPageReserved(p);
 	set_page_count(p, 0);
 
-	atomic_long_add(nr_pages, &page_zone(page)->managed_pages);
 	set_page_refcounted(page);
 	__free_pages(page, order);
 }
@@ -1453,6 +1452,7 @@ void __init memblock_free_pages(struct page *page, unsigned long pfn,
 	if (early_page_uninitialised(pfn))
 		return;
 	__free_pages_core(page, order);
+    atomic_long_add(1UL << order, &page_zone(page)->managed_pages);
 }
 
 /*
@@ -1590,23 +1590,31 @@ deferred_pfn_valid(int nid, unsigned long pfn,
 	return true;
 }
 
+struct deferred_args {
+	int nid;
+	int zid;
+	atomic64_t nr_pages;
+};
+
 /*
  * Free pages to buddy allocator. Try to free aligned pages in
  * pageblock_nr_pages sizes.
  */
-static void __init deferred_free_pages(int nid, int zid, unsigned long pfn,
-				       unsigned long end_pfn)
+static int __init deferred_free_pages(int nid, int zid, unsigned long pfn,
+				      unsigned long end_pfn)
 {
 	struct mminit_pfnnid_cache nid_init_state = { };
 	unsigned long nr_pgmask = pageblock_nr_pages - 1;
-	unsigned long nr_free = 0;
+	unsigned long nr_free = 0, nr_pages = 0;
 
 	for (; pfn < end_pfn; pfn++) {
 		if (!deferred_pfn_valid(nid, pfn, &nid_init_state)) {
 			deferred_free_range(pfn - nr_free, nr_free);
+			nr_pages += nr_free;
 			nr_free = 0;
 		} else if (!(pfn & nr_pgmask)) {
 			deferred_free_range(pfn - nr_free, nr_free);
+			nr_pages += nr_free;
 			nr_free = 1;
 			touch_nmi_watchdog();
 		} else {
@@ -1615,16 +1623,27 @@ static void __init deferred_free_pages(int nid, int zid, unsigned long pfn,
 	}
 	/* Free the last block of pages to allocator */
 	deferred_free_range(pfn - nr_free, nr_free);
+	nr_pages += nr_free;
+
+	return nr_pages;
+}
+
+static int __init deferred_free_chunk(unsigned long pfn, unsigned long end_pfn,
+				      struct deferred_args *args)
+{
+	unsigned long nr_pages = deferred_free_pages(args->nid, args->zid, pfn,
+						     end_pfn);
+	atomic64_add(nr_pages, &args->nr_pages);
+	return KTASK_RETURN_SUCCESS;
 }
 
 /*
  * Initialize struct pages.  We minimize pfn page lookups and scheduler checks
  * by performing it only once every pageblock_nr_pages.
- * Return number of pages initialized.
+ * Return number of pages initialized in deferred_args.
  */
-static unsigned long  __init deferred_init_pages(int nid, int zid,
-						 unsigned long pfn,
-						 unsigned long end_pfn)
+static int __init deferred_init_pages(int nid, int zid, unsigned long pfn,
+				      unsigned long end_pfn)
 {
 	struct mminit_pfnnid_cache nid_init_state = { };
 	unsigned long nr_pgmask = pageblock_nr_pages - 1;
@@ -1644,7 +1663,17 @@ static unsigned long  __init deferred_init_pages(int nid, int zid,
 		__init_single_page(page, pfn, zid, nid);
 		nr_pages++;
 	}
-	return (nr_pages);
+
+	return nr_pages;
+}
+
+static int __init deferred_init_chunk(unsigned long pfn, unsigned long end_pfn,
+				      struct deferred_args *args)
+{
+	unsigned long nr_pages = deferred_init_pages(args->nid, args->zid, pfn,
+						     end_pfn);
+	atomic64_add(nr_pages, &args->nr_pages);
+	return KTASK_RETURN_SUCCESS;
 }
 
 /* Initialise remaining memory on a node */
@@ -1653,13 +1682,15 @@ static int __init deferred_init_memmap(void *data)
 	pg_data_t *pgdat = data;
 	int nid = pgdat->node_id;
 	unsigned long start = jiffies;
-	unsigned long nr_pages = 0;
+	unsigned long nr_init = 0, nr_free = 0;
 	unsigned long spfn, epfn, first_init_pfn, flags;
 	phys_addr_t spa, epa;
 	int zid;
 	struct zone *zone;
 	const struct cpumask *cpumask = cpumask_of_node(pgdat->node_id);
 	u64 i;
+	unsigned long nr_node_cpus;
+	struct ktask_node kn;
 
 	/* Bind memory initialisation thread to a local node if possible */
 	if (!cpumask_empty(cpumask))
@@ -1672,6 +1703,14 @@ static int __init deferred_init_memmap(void *data)
 		pgdat_init_report_one_done();
 		return 0;
 	}
+
+	/*
+	 * We'd like to know the memory bandwidth of the chip to calculate the
+	 * most efficient number of threads to start, but we can't.  In
+	 * testing, a good value for a variety of systems was a quarter of the
+	 * CPUs on the node.
+	 */
+	nr_node_cpus = DIV_ROUND_UP(cpumask_weight(cpumask), 4);
 
 	/* Sanity check boundaries */
 	BUG_ON(pgdat->first_deferred_pfn < pgdat->node_start_pfn);
@@ -1693,21 +1732,46 @@ static int __init deferred_init_memmap(void *data)
 	 * page in __free_one_page()).
 	 */
 	for_each_free_mem_range(i, nid, MEMBLOCK_NONE, &spa, &epa, NULL) {
+		struct deferred_args args = { nid, zid, ATOMIC64_INIT(0) };
+		DEFINE_KTASK_CTL(ctl, deferred_init_chunk, &args,
+				 KTASK_PTE_MINCHUNK);
+		ktask_ctl_set_max_threads(&ctl, nr_node_cpus);
+
 		spfn = max_t(unsigned long, first_init_pfn, PFN_UP(spa));
 		epfn = min_t(unsigned long, zone_end_pfn(zone), PFN_DOWN(epa));
-		nr_pages += deferred_init_pages(nid, zid, spfn, epfn);
+
+		kn.kn_start	= (void *)spfn;
+		kn.kn_task_size	= (spfn < epfn) ? epfn - spfn : 0;
+		kn.kn_nid	= nid;
+		(void) ktask_run_numa(&kn, 1, &ctl);
+
+		nr_init += atomic64_read(&args.nr_pages);
 	}
 	for_each_free_mem_range(i, nid, MEMBLOCK_NONE, &spa, &epa, NULL) {
+		struct deferred_args args = { nid, zid, ATOMIC64_INIT(0) };
+		DEFINE_KTASK_CTL(ctl, deferred_free_chunk, &args,
+				 KTASK_PTE_MINCHUNK);
+		ktask_ctl_set_max_threads(&ctl, nr_node_cpus);
+
 		spfn = max_t(unsigned long, first_init_pfn, PFN_UP(spa));
 		epfn = min_t(unsigned long, zone_end_pfn(zone), PFN_DOWN(epa));
-		deferred_free_pages(nid, zid, spfn, epfn);
+
+		kn.kn_start	= (void *)spfn;
+		kn.kn_task_size	= (spfn < epfn) ? epfn - spfn : 0;
+		kn.kn_nid	= nid;
+		(void) ktask_run_numa(&kn, 1, &ctl);
+
+		nr_free += atomic64_read(&args.nr_pages);
 	}
 	pgdat_resize_unlock(pgdat, &flags);
 
 	/* Sanity check that the next zone really is unpopulated */
 	WARN_ON(++zid < MAX_NR_ZONES && populated_zone(++zone));
+	VM_BUG_ON(nr_init != nr_free);
 
-	pr_info("node %d initialised, %lu pages in %ums\n", nid, nr_pages,
+	atomic_long_add(nr_free, &zone->managed_pages);
+
+	pr_info("node %d initialised, %lu pages in %ums\n", nid, nr_free,
 					jiffies_to_msecs(jiffies - start));
 
 	pgdat_init_report_one_done();
