@@ -387,22 +387,12 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 
 	trace_kvm_hv_hypercall(code, fast, rep_cnt, rep_idx, ingpa, outgpa);
 
+    printk(KERN_INFO "hypercall %llu\n", code);
+
 	switch (code) {
 	case HV_X64_HV_NOTIFY_LONG_SPIN_WAIT:
 		kvm_vcpu_on_spin(vcpu);
 		break;
-    case HV_X64_HV_GET_HOST_ELAPSED:
-        elapsed = kvm_x86_get_time();
-        kvm_x86_reset_time();
-
-        /* 
-         * Return the value of elapsed to userspace through RAX and RDX. Specifically,
-         * elapsed = (edx << 32) | eax
-         */
-        kvm_register_write(vcpu, VCPU_REGS_RAX, elapsed & 0xffffffff);
-        kvm_register_write(vcpu, VCPU_REGS_RDX, (elapsed >> 32) & 0xffffffff);
-
-        break;
 	default:
 		res = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;

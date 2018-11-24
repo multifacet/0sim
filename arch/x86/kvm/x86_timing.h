@@ -4,5 +4,6 @@
 void kvm_x86_elapse_time(unsigned long long);
 unsigned long long kvm_x86_get_time(void);
 void kvm_x86_reset_time(void);
+void kvm_x86_set_entry_exit_time(unsigned long long);
 
 #endif

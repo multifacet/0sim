@@ -4,16 +4,23 @@
 #include <linux/module.h>
 
 static unsigned long long elapsed = 0;
+static unsigned long long entry_exit_time = 0;
 
 void kvm_x86_elapse_time(unsigned long long extra) {
-    elapsed += extra;
+    elapsed += extra - entry_exit_time;
     //printk(KERN_DEBUG "elapsed %llu\n", extra);
 }
 EXPORT_SYMBOL(kvm_x86_elapse_time);
 
+void kvm_x86_set_entry_exit_time(unsigned long long e) {
+    entry_exit_time = e;
+    printk(KERN_INFO "entry exit time calibrated to %llu\n", e);
+}
+
 void kvm_x86_reset_time(void)
 {
     elapsed = 0;
+    entry_exit_time = 0;
     //printk(KERN_DEBUG "elapsed reset");
 }
 

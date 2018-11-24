@@ -5903,7 +5903,8 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 	}
 
     // Can use from any CPL
-    if (nr == KVM_HC_X86_HOST_ELAPSED) {
+    switch (nr) {
+    case KVM_HC_X86_HOST_ELAPSED:
         elapsed = kvm_x86_get_time();
         kvm_x86_reset_time();
 
@@ -5918,6 +5919,17 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
         kvm_register_write(vcpu, VCPU_REGS_RDX, (elapsed >> 32) & 0xffffffff);
 
         goto out;
+    break;
+
+    case KVM_HC_X86_CALIBRATE:
+        // Calibrate with the timing from a0 (rbx)
+        kvm_x86_set_entry_exit_time(a0);
+
+    case KVM_HC_X86_NOP:
+        // fall through to default...
+
+    default:
+    break;
     }
 
 	if (kvm_x86_ops->get_cpl(vcpu) != 0) {
