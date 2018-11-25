@@ -8083,6 +8083,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
     int ret;
     unsigned long long start = rdtsc();
     unsigned long long elapsed;
+    unsigned long long entry_exit_time = kvm_x86_get_entry_exit_time();
 
 	trace_kvm_exit(exit_reason, vcpu, KVM_ISA_VMX);
 
@@ -8101,7 +8102,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		ret = handle_invalid_guest_state(vcpu);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
         return ret;
     }
 
@@ -8111,7 +8112,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 				  vmcs_readl(EXIT_QUALIFICATION));
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 1;
 	}
 
@@ -8122,7 +8123,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 			= exit_reason;
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 0;
 	}
 
@@ -8132,7 +8133,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 			= vmcs_read32(VM_INSTRUCTION_ERROR);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 0;
 	}
 
@@ -8154,7 +8155,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->internal.data[1] = exit_reason;
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 0;
 	}
 
@@ -8183,7 +8184,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		ret = kvm_vmx_exit_handlers[exit_reason](vcpu);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
         return ret;
     }
 	else {
@@ -8191,7 +8192,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		kvm_queue_exception(vcpu, UD_VECTOR);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 1;
 	}
 }
@@ -9726,7 +9727,7 @@ static void prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 	/* vmcs12's VM_ENTRY_LOAD_IA32_EFER and VM_ENTRY_IA32E_MODE are
 	 * emulated by vmx_set_efer(), below.
 	 */
-	vm_entry_controls_init(vmx, 
+	vm_entry_controls_init(vmx,
 		(vmcs12->vm_entry_controls & ~VM_ENTRY_LOAD_IA32_EFER &
 			~VM_ENTRY_IA32E_MODE) |
 		(vmcs_config.vmentry_ctrl & ~VM_ENTRY_IA32E_MODE));
