@@ -5922,7 +5922,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
     break;
 
     case KVM_HC_X86_CALIBRATE:
-        // Calibrate with the timing from a0 (rbx)
+        // Calibrate with the up/down from a0 (rbx)
         kvm_x86_set_entry_exit_time(a0);
 
     case KVM_HC_X86_NOP:

@@ -12,9 +12,13 @@ void kvm_x86_elapse_time(unsigned long long extra) {
 }
 EXPORT_SYMBOL(kvm_x86_elapse_time);
 
-void kvm_x86_set_entry_exit_time(unsigned long long e) {
-    entry_exit_time = e;
-    printk(KERN_INFO "entry exit time calibrated to %llu\n", e);
+void kvm_x86_set_entry_exit_time(bool up) {
+    if (up) {
+        entry_exit_time += 10;
+    } else {
+        entry_exit_time -= 10;
+    }
+    printk(KERN_INFO "entry exit time calibrated to %llu\n", entry_exit_time);
 }
 
 unsigned long long kvm_x86_get_entry_exit_time() {
