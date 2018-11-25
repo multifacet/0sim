@@ -8184,7 +8184,9 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		ret = kvm_vmx_exit_handlers[exit_reason](vcpu);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
+        //vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, 100000);
+        printk("eet %llu + %llu\n", elapsed, entry_exit_time);
         return ret;
     }
 	else {
