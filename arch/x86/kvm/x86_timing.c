@@ -12,8 +12,8 @@ void kvm_x86_elapse_time(unsigned long long extra) {
 }
 EXPORT_SYMBOL(kvm_x86_elapse_time);
 
-void kvm_x86_set_entry_exit_time(int up) {
-    if (up) {
+void kvm_x86_set_entry_exit_time(int too_low) {
+    if (too_low) {
         entry_exit_time += 10;
     } else {
         entry_exit_time -= 10;
