@@ -2448,20 +2448,24 @@ static void vmx_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 
 static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 {
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 	printk(KERN_WARNING "adjust tsc offset\n");
-	//u64 offset = vmcs_read64(TSC_OFFSET);
+#else
+	u64 offset = vmcs_read64(TSC_OFFSET);
 
-	//vmcs_write64(TSC_OFFSET, offset + adjustment);
-	//if (is_guest_mode(vcpu)) {
-	//	/* Even when running L2, the adjustment needs to apply to L1 */
-	//	to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
-	//} else
-	//	trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
-	//				   offset + adjustment);
+	vmcs_write64(TSC_OFFSET, offset + adjustment);
+	if (is_guest_mode(vcpu)) {
+		/* Even when running L2, the adjustment needs to apply to L1 */
+		to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
+	} else
+		trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
+					   offset + adjustment);
+#endif
 }
 
 static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adjustment)
 {
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 	u64 offset = vmcs_read64(TSC_OFFSET);
 	u64 mult = vmcs_read64(TSC_MULTIPLIER);
 	//printk(KERN_INFO "adjust tsc offset %ld, mult %ld\n", offset, mult);
@@ -2473,6 +2477,7 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
 	} else
 		trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
 					   offset + adjustment);
+#endif
 }
 
 static bool guest_cpuid_has_vmx(struct kvm_vcpu *vcpu)
