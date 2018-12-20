@@ -83,6 +83,9 @@ static inline unsigned long compact_gap(unsigned int order)
 	return 2UL << order;
 }
 
+void inc_num_per_page_ops(unsigned long);
+void inc_num_per_page_undone_ops(unsigned long);
+
 #ifdef CONFIG_COMPACTION
 extern int sysctl_compact_memory;
 extern int sysctl_compaction_handler(struct ctl_table *table, int write,
