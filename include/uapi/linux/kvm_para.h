@@ -24,6 +24,8 @@
 #define KVM_HC_MIPS_EXIT_VM		7
 #define KVM_HC_MIPS_CONSOLE_OUTPUT	8
 #define KVM_HC_X86_HOST_ELAPSED     9
+#define KVM_HC_X86_NOP     0xA
+#define KVM_HC_X86_CALIBRATE     0xB
 
 /*
  * hypercalls use architecture specific

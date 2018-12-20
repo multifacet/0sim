@@ -2448,20 +2448,24 @@ static void vmx_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 
 static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 {
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 	printk(KERN_WARNING "adjust tsc offset\n");
-	//u64 offset = vmcs_read64(TSC_OFFSET);
+#else
+	u64 offset = vmcs_read64(TSC_OFFSET);
 
-	//vmcs_write64(TSC_OFFSET, offset + adjustment);
-	//if (is_guest_mode(vcpu)) {
-	//	/* Even when running L2, the adjustment needs to apply to L1 */
-	//	to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
-	//} else
-	//	trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
-	//				   offset + adjustment);
+	vmcs_write64(TSC_OFFSET, offset + adjustment);
+	if (is_guest_mode(vcpu)) {
+		/* Even when running L2, the adjustment needs to apply to L1 */
+		to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
+	} else
+		trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
+					   offset + adjustment);
+#endif
 }
 
 static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adjustment)
 {
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 	u64 offset = vmcs_read64(TSC_OFFSET);
 	u64 mult = vmcs_read64(TSC_MULTIPLIER);
 	//printk(KERN_INFO "adjust tsc offset %ld, mult %ld\n", offset, mult);
@@ -2473,6 +2477,7 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
 	} else
 		trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
 					   offset + adjustment);
+#endif
 }
 
 static bool guest_cpuid_has_vmx(struct kvm_vcpu *vcpu)
@@ -8083,6 +8088,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
     int ret;
     unsigned long long start = rdtsc();
     unsigned long long elapsed;
+    unsigned long long entry_exit_time = kvm_x86_get_entry_exit_time();
 
 	trace_kvm_exit(exit_reason, vcpu, KVM_ISA_VMX);
 
@@ -8101,7 +8107,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		ret = handle_invalid_guest_state(vcpu);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
         return ret;
     }
 
@@ -8111,7 +8117,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 				  vmcs_readl(EXIT_QUALIFICATION));
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 1;
 	}
 
@@ -8122,7 +8128,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 			= exit_reason;
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 0;
 	}
 
@@ -8132,7 +8138,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 			= vmcs_read32(VM_INSTRUCTION_ERROR);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 0;
 	}
 
@@ -8154,7 +8160,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->internal.data[1] = exit_reason;
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 0;
 	}
 
@@ -8183,7 +8189,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		ret = kvm_vmx_exit_handlers[exit_reason](vcpu);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
         return ret;
     }
 	else {
@@ -8191,7 +8197,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		kvm_queue_exception(vcpu, UD_VECTOR);
         elapsed = rdtsc() - start;
         kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 		return 1;
 	}
 }
@@ -9726,7 +9732,7 @@ static void prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 	/* vmcs12's VM_ENTRY_LOAD_IA32_EFER and VM_ENTRY_IA32E_MODE are
 	 * emulated by vmx_set_efer(), below.
 	 */
-	vm_entry_controls_init(vmx, 
+	vm_entry_controls_init(vmx,
 		(vmcs12->vm_entry_controls & ~VM_ENTRY_LOAD_IA32_EFER &
 			~VM_ENTRY_IA32E_MODE) |
 		(vmcs_config.vmentry_ctrl & ~VM_ENTRY_IA32E_MODE));
