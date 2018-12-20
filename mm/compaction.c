@@ -23,7 +23,42 @@
 #include <linux/freezer.h>
 #include <linux/page_owner.h>
 #include <linux/psi.h>
+#include <linux/syscalls.h>
 #include "internal.h"
+
+// The number of operations that are repeated for pages (e.g. isolation,
+// migration, freeing, etc.). This counter includes ops that undo other ops.
+// It is a proxy for the total amount of work done during compaction.
+static unsigned long num_per_page_ops = 0;
+
+// The number of operations counted towards `num_per_page_ops` that were later
+// undone. This is a proxy for the amount of wasted work.
+static unsigned long num_per_page_undone_ops = 0;
+
+void inc_num_per_page_ops(unsigned long n)
+{
+    num_per_page_ops += n;
+}
+
+void inc_num_per_page_undone_ops(unsigned long n)
+{
+    num_per_page_undone_ops += n;
+}
+
+// Define a syscall to retrieve the values of the counters
+SYSCALL_DEFINE1(get_compaction_counters, unsigned long, which)
+{
+    switch (which) {
+        case 0:
+            return num_per_page_ops;
+
+        case 1:
+            return num_per_page_undone_ops;
+
+        default:
+            return 0xDEADBEEF;
+    }
+}
 
 #ifdef CONFIG_COMPACTION
 static inline void count_compact_event(enum vm_event_item item)
@@ -58,6 +93,7 @@ static unsigned long release_freepages(struct list_head *freelist)
 	list_for_each_entry_safe(page, next, freelist, lru) {
 		unsigned long pfn = page_to_pfn(page);
 		list_del(&page->lru);
+        inc_num_per_page_ops(1);
 		__free_page(page);
 		if (pfn > high_pfn)
 			high_pfn = pfn;
@@ -975,6 +1011,7 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 		lruvec = mem_cgroup_page_lruvec(page, pgdat);
 
 		/* Try isolate the page */
+        inc_num_per_page_ops(1);
 		if (__isolate_lru_page(page, isolate_mode) != 0)
 			goto isolate_fail;
 
