@@ -67,11 +67,25 @@
 #include <linux/lockdep.h>
 #include <linux/nmi.h>
 #include <linux/psi.h>
+#include <linux/syscalls.h>
+#include <linux/ktask.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
 #include "internal.h"
+
+static atomic64_t num_deferred_init_chunks = ATOMIC64_INIT(0);
+
+/*
+ * Syscall to get the number of deferred initialize ktask chunks.
+ *
+ * Call this after initialization is done.
+ */
+SYSCALL_DEFINE0(get_struct_page_init_ktask_chunks)
+{
+    return atomic64_read(&num_deferred_init_chunks);
+}
 
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
@@ -1673,6 +1687,7 @@ static int __init deferred_init_chunk(unsigned long pfn, unsigned long end_pfn,
 	unsigned long nr_pages = deferred_init_pages(args->nid, args->zid, pfn,
 						     end_pfn);
 	atomic64_add(nr_pages, &args->nr_pages);
+    atomic64_add(1, &num_deferred_init_chunks);
 	return KTASK_RETURN_SUCCESS;
 }
 
