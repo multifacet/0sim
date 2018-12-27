@@ -84,7 +84,7 @@ static atomic64_t num_deferred_init_chunks = ATOMIC64_INIT(0);
  */
 SYSCALL_DEFINE0(get_struct_page_init_ktask_chunks)
 {
-    return atomic64_read(&num_deferred_init_chunks);
+    return atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK;
 }
 
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
@@ -1687,7 +1687,6 @@ static int __init deferred_init_chunk(unsigned long pfn, unsigned long end_pfn,
 	unsigned long nr_pages = deferred_init_pages(args->nid, args->zid, pfn,
 						     end_pfn);
 	atomic64_add(nr_pages, &args->nr_pages);
-    atomic64_add(1, &num_deferred_init_chunks);
 	return KTASK_RETURN_SUCCESS;
 }
 
@@ -1758,6 +1757,9 @@ static int __init deferred_init_memmap(void *data)
 		kn.kn_start	= (void *)spfn;
 		kn.kn_task_size	= (spfn < epfn) ? epfn - spfn : 0;
 		kn.kn_nid	= nid;
+
+        atomic64_add(kn.kn_task_size, &num_deferred_init_chunks);
+
 		(void) ktask_run_numa(&kn, 1, &ctl);
 
 		nr_init += atomic64_read(&args.nr_pages);
