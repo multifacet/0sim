@@ -5908,7 +5908,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
         elapsed = kvm_x86_get_time();
         kvm_x86_reset_time();
 
-        /* 
+        /*
          * Return the value of elapsed to userspace through RAX and RDX. Specifically,
          * elapsed = (edx << 32) | eax
          *
@@ -6405,6 +6405,7 @@ void kvm_arch_mmu_notifier_invalidate_page(struct kvm *kvm,
 static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 {
 	int r;
+    unsigned long long start = rdtsc(), end;
 	bool req_int_win =
 		dm_request_for_irq_injection(vcpu) &&
 		kvm_cpu_accept_dm_intr(vcpu);
@@ -6574,7 +6575,12 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		vcpu->arch.switch_db_regs &= ~KVM_DEBUGREG_RELOAD;
 	}
 
+    end = rdtsc();
+    kvm_vcpu_miss_more_cycles(vcpu, end - start);
+
 	kvm_x86_ops->run(vcpu);
+
+    start = rdtsc();
 
 	/*
 	 * Do this here before restoring debug registers on the host.  And
@@ -6640,6 +6646,8 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		kvm_lapic_sync_from_vapic(vcpu);
 
 	r = kvm_x86_ops->handle_exit(vcpu);
+    end = rdtsc();
+    kvm_vcpu_miss_more_cycles(vcpu, end - start);
 	return r;
 
 cancel_injection:
@@ -6696,9 +6704,16 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 
 	vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
 
+    unsigned long long start = 0, end;
+
 	for (;;) {
 		if (kvm_vcpu_running(vcpu)) {
+            if (start != 0) {
+                end = rdtsc();
+                kvm_vcpu_miss_more_cycles(vcpu, end - start);
+            }
 			r = vcpu_enter_guest(vcpu);
+            start = rdtsc();
 		} else {
 			r = vcpu_block(kvm, vcpu);
 		}

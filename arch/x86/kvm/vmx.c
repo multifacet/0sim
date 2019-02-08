@@ -2449,7 +2449,7 @@ static void vmx_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 {
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-	printk(KERN_WARNING "adjust tsc offset\n");
+	printk(KERN_WARNING "not adjusting tsc offset. adjustment: %ld\n", adjustment);
 #else
 	u64 offset = vmcs_read64(TSC_OFFSET);
 
@@ -8105,20 +8105,15 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	/* If guest state is invalid, start emulating */
 	if (vmx->emulation_required) {
 		ret = handle_invalid_guest_state(vcpu);
-        elapsed = rdtsc() - start;
-        kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
-        return ret;
+        goto out;
     }
 
 	if (is_guest_mode(vcpu) && nested_vmx_exit_handled(vcpu)) {
 		nested_vmx_vmexit(vcpu, exit_reason,
 				  vmcs_read32(VM_EXIT_INTR_INFO),
 				  vmcs_readl(EXIT_QUALIFICATION));
-        elapsed = rdtsc() - start;
-        kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
-		return 1;
+        ret = 1;
+        goto out;
 	}
 
 	if (exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY) {
@@ -8126,20 +8121,16 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
 		vcpu->run->fail_entry.hardware_entry_failure_reason
 			= exit_reason;
-        elapsed = rdtsc() - start;
-        kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
-		return 0;
+        ret = 0;
+        goto out;
 	}
 
 	if (unlikely(vmx->fail)) {
 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
 		vcpu->run->fail_entry.hardware_entry_failure_reason
 			= vmcs_read32(VM_INSTRUCTION_ERROR);
-        elapsed = rdtsc() - start;
-        kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
-		return 0;
+        ret = 0;
+        goto out;
 	}
 
 	/*
@@ -8158,10 +8149,8 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		vcpu->run->internal.ndata = 2;
 		vcpu->run->internal.data[0] = vectoring_info;
 		vcpu->run->internal.data[1] = exit_reason;
-        elapsed = rdtsc() - start;
-        kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
-		return 0;
+        ret = 0;
+        goto out;
 	}
 
 	if (unlikely(!cpu_has_virtual_nmis() && vmx->soft_vnmi_blocked &&
@@ -8187,19 +8176,17 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	if (exit_reason < kvm_vmx_max_exit_handlers
 	    && kvm_vmx_exit_handlers[exit_reason]) {
 		ret = kvm_vmx_exit_handlers[exit_reason](vcpu);
-        elapsed = rdtsc() - start;
-        kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
-        return ret;
+        goto out;
     }
 	else {
 		WARN_ONCE(1, "vmx: unexpected exit reason 0x%x\n", exit_reason);
 		kvm_queue_exception(vcpu, UD_VECTOR);
-        elapsed = rdtsc() - start;
-        kvm_x86_elapse_time(elapsed);
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
-		return 1;
+        ret = 1;
+        goto out;
 	}
+
+out:
+    return ret;
 }
 
 static void update_cr8_intercept(struct kvm_vcpu *vcpu, int tpr, int irr)
@@ -8567,6 +8554,18 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long debugctlmsr, cr4;
 
+    unsigned long long start1, start2, end1, end2;
+
+    start1 = rdtsc();
+
+    // Actually offset guest TSC based on time up to now
+    unsigned long long entry_exit_time = kvm_x86_get_entry_exit_time();
+    unsigned long long elapsed = kvm_vcpu_get_and_reset_tsc_missing_cycles(vcpu);
+    vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
+
+    // Update host total count
+    kvm_x86_elapse_time(elapsed);
+
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!cpu_has_virtual_nmis() && vmx->soft_vnmi_blocked))
 		vmx->entry_time = ktime_get();
@@ -8604,6 +8603,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	 * case. */
 	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)
 		vmx_set_interrupt_shadow(vcpu, 0);
+
+    end1 = rdtsc();
 
 	atomic_switch_perf_msrs(vmx);
 	debugctlmsr = get_debugctlmsr();
@@ -8731,6 +8732,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	loadsegment(es, __USER_DS);
 #endif
 
+    start2 = rdtsc();
+
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)
 				  | (1 << VCPU_EXREG_RFLAGS)
 				  | (1 << VCPU_EXREG_PDPTR)
@@ -8757,6 +8760,11 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx_complete_atomic_exit(vmx);
 	vmx_recover_nmi_blocking(vmx);
 	vmx_complete_interrupts(vmx);
+
+    end2 = rdtsc();
+
+    // Account for elapsed time in this function.
+    kvm_vcpu_miss_more_cycles(vcpu, (end1 - start1) + (end2 - start2));
 }
 
 static void vmx_load_vmcs01(struct kvm_vcpu *vcpu)

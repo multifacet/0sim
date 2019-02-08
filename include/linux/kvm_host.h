@@ -282,7 +282,26 @@ struct kvm_vcpu {
 #endif
 	bool preempted;
 	struct kvm_vcpu_arch arch;
+
+    unsigned long long tsc_missing_cycles;
 };
+
+static inline void kvm_vcpu_miss_more_cycles(struct kvm_vcpu *vcpu, unsigned long cycles)
+{
+    vcpu->tsc_missing_cycles += cycles;
+}
+
+static inline unsigned long kvm_vcpu_get_tsc_missing_cycles(struct kvm_vcpu *vcpu)
+{
+    return vcpu->tsc_missing_cycles;
+}
+
+static inline unsigned long kvm_vcpu_get_and_reset_tsc_missing_cycles(struct kvm_vcpu *vcpu)
+{
+    unsigned long cycles = kvm_vcpu_get_tsc_missing_cycles(vcpu);
+    vcpu->tsc_missing_cycles = 0;
+    return cycles;
+}
 
 static inline int kvm_vcpu_exiting_guest_mode(struct kvm_vcpu *vcpu)
 {
