@@ -4,6 +4,10 @@
 
 #include <stdbool.h>
 
+#ifndef SYS_gettid
+#define SYS_gettid __NR_gettid
+#endif
+
 #define TEST_ASSERT_VAL(text, cond)					 \
 do {									 \
 	if (!(cond)) {							 \
