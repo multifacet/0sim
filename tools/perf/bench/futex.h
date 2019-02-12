@@ -12,6 +12,10 @@
 #include <sys/types.h>
 #include <linux/futex.h>
 
+#ifndef SYS_futex
+#define SYS_futex __NR_futex
+#endif
+
 /**
  * futex() - SYS_futex syscall wrapper
  * @uaddr:	address of first futex

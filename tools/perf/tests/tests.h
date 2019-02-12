@@ -1,6 +1,10 @@
 #ifndef TESTS_H
 #define TESTS_H
 
+#ifndef SYS_gettid
+#define SYS_gettid __NR_gettid
+#endif
+
 #define TEST_ASSERT_VAL(text, cond)					 \
 do {									 \
 	if (!(cond)) {							 \
