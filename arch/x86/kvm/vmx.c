@@ -8557,9 +8557,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long debugctlmsr, cr4;
 
-    unsigned long long start1, start2, end1, end2;
-
-    start1 = rdtsc();
+    unsigned long long start1 = rdtsc(), start2, end1, end2;
 
     // Actually offset guest TSC based on time up to now
     unsigned long long entry_exit_time = kvm_x86_get_entry_exit_time();
