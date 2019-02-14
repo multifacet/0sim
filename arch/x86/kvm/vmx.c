@@ -2449,7 +2449,7 @@ static void vmx_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 {
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-	printk(KERN_WARNING "not adjusting tsc offset. adjustment: %ld\n", adjustment);
+	printk(KERN_WARNING "not adjusting tsc offset. adjustment: %lld\n", adjustment);
 #else
 	u64 offset = vmcs_read64(TSC_OFFSET);
 
@@ -2472,7 +2472,7 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
 
     // Warn if the adjustment is huge (4GHz => warn at ~1min).
     const s64 too_big = 60l * 4000000000l;
-    printk(KERN_WARNING "Very large adjustment: %l\n", adjustment);
+    printk(KERN_WARNING "Very large adjustment: %lld\n", adjustment);
 
 	vmcs_write64(TSC_OFFSET, offset + adjustment);
 	if (is_guest_mode(vcpu)) {
