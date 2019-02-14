@@ -1419,6 +1419,8 @@ void kvm_write_tsc(struct kvm_vcpu *vcpu, struct msr_data *msr)
 	bool already_matched;
 	u64 data = msr->data;
 
+    printk(KERN_WARNING "Guest adjusting TSC\n");
+
 	raw_spin_lock_irqsave(&kvm->arch.tsc_write_lock, flags);
 	offset = kvm_compute_tsc_offset(vcpu, data);
 	ns = get_kernel_ns();
