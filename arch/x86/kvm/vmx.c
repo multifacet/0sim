@@ -2470,6 +2470,10 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
 	u64 mult = vmcs_read64(TSC_MULTIPLIER);
 	//printk(KERN_INFO "adjust tsc offset %ld, mult %ld\n", offset, mult);
 
+    // Warn if the adjustment is huge (4GHz => warn at ~1min).
+    const s64 too_big = 60l * 4000000000l;
+    printk(KERN_WARNING "Very large adjustment: %l\n", adjustment);
+
 	vmcs_write64(TSC_OFFSET, offset + adjustment);
 	if (is_guest_mode(vcpu)) {
 		/* Even when running L2, the adjustment needs to apply to L1 */
