@@ -2467,12 +2467,14 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
 {
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 	u64 offset = vmcs_read64(TSC_OFFSET);
-	u64 mult = vmcs_read64(TSC_MULTIPLIER);
+	//u64 mult = vmcs_read64(TSC_MULTIPLIER);
 	//printk(KERN_INFO "adjust tsc offset %ld, mult %ld\n", offset, mult);
 
     // Warn if the adjustment is huge (4GHz => warn at ~1min).
     const s64 too_big = 60l * 4000000000l;
-    printk(KERN_WARNING "Very large adjustment: %lld\n", adjustment);
+    if (adjustment >= too_big) {
+        printk(KERN_WARNING "Very large adjustment: %lld\n", adjustment);
+    }
 
 	vmcs_write64(TSC_OFFSET, offset + adjustment);
 	if (is_guest_mode(vcpu)) {
@@ -8090,9 +8092,6 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	u32 vectoring_info = vmx->idt_vectoring_info;
 
     int ret;
-    unsigned long long start = rdtsc();
-    unsigned long long elapsed;
-    unsigned long long entry_exit_time = kvm_x86_get_entry_exit_time();
 
 	trace_kvm_exit(exit_reason, vcpu, KVM_ISA_VMX);
 
