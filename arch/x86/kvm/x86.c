@@ -6699,6 +6699,55 @@ static inline bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
 		!vcpu->arch.apf.halted);
 }
 
+#define BEHIND_THRESHOLD 10000000
+
+/*
+ * If the vcpu's virtual time is ahead of other vcpu's virtual time (i.e. it's
+ * clock is running to fast), returns the difference in clocks. Otherwise,
+ * returns 0. To rectify this we slow down this vcpu so that other vcpus can
+ * catch up. We slow down this vcpu by yield the host cpu back to the
+ * scheduler.
+ */
+static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
+{
+    // Rather than attempting to read the remote vcpu's TSC in real time,
+    // we read the current cpu's host TSC and add every vcpu's offset to it to
+    // compare them. This allows us to avoid complicated shenanigans to account
+    // for the time spent in _this function_.
+    //
+    // This depends on the assumption that the host TSC's of all cpus are roughly
+    // synchronized, which may or may not be true.
+
+    int i;
+
+    // TSC on `vcpu`
+    const unsigned long long host_local_tsc = rdtsc();
+    const unsigned long long local_tsc = kvm_read_l1_tsc(vcpu, host_local_tsc);
+
+    // The lowest tsc of any vcpu
+    unsigned long long min_tsc = local_tsc;
+    unsigned long long other_tsc;
+
+    // We don't return immediately when we find the first "behind" vcpu.
+    // Instead, we look for the _most_ "behind" vcpu so that we can judge how
+    // long to wait.
+	for (i = 0; i < atomic_read(&vcpu->kvm->online_vcpus); i++) {
+        other_tsc = kvm_read_l1_tsc(&vcpu->kvm->vcpus[i], host_local_tsc);
+        if (other_tsc < min_tsc) {
+            min_tsc = other_tsc;
+        }
+    }
+
+    // If the most "behind" vcpu is not that far behind, we don't care too much.
+    // TODO: maybe we want some more fine grained control here? Rather than just
+    // yielding the processor.
+    if (other_tsc < (local_tsc - BEHIND_THRESHOLD)) {
+        return local_tsc - other_tsc;
+    } else {
+        return 0;
+    }
+}
+
 static int vcpu_run(struct kvm_vcpu *vcpu)
 {
 	int r;
@@ -6743,7 +6792,11 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 			++vcpu->stat.signal_exits;
 			break;
 		}
-		if (need_resched()) {
+
+        // Yield the cpu if the scheduler requests it or if we need to slow
+        // down this vcpu. Slowing down the vcpu is necessary whenever it
+        // gets too far ahead of other vcpus.
+		while (need_resched() || vcpu_is_ahead(vcpu)) {
 			srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
 			cond_resched();
 			vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
