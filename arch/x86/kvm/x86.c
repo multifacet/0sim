@@ -6732,7 +6732,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // Instead, we look for the _most_ "behind" vcpu so that we can judge how
     // long to wait.
 	for (i = 0; i < atomic_read(&vcpu->kvm->online_vcpus); i++) {
-        other_tsc = kvm_read_l1_tsc(&vcpu->kvm->vcpus[i], host_local_tsc);
+        other_tsc = kvm_read_l1_tsc(vcpu->kvm->vcpus[i], host_local_tsc);
         if (other_tsc < min_tsc) {
             min_tsc = other_tsc;
         }
@@ -6741,8 +6741,9 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // If the most "behind" vcpu is not that far behind, we don't care too much.
     // TODO: maybe we want some more fine grained control here? Rather than just
     // yielding the processor.
-    if (other_tsc < (local_tsc - BEHIND_THRESHOLD)) {
-        return local_tsc - other_tsc;
+    if (min_tsc < (local_tsc - BEHIND_THRESHOLD)) {
+        printk(KERN_WARNING "Stalling vcpu %d on cpu %d\n", vcpu->vcpu_id, vcpu->cpu);
+        return local_tsc - min_tsc;
     } else {
         return 0;
     }
