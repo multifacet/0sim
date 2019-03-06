@@ -283,22 +283,43 @@ struct kvm_vcpu {
 	bool preempted;
 	struct kvm_vcpu_arch arch;
 
+    /*
+     * 0sim accounts for cycles spent in the hypervisor by subtracting them out
+     * of the guest TSC before a vmenter. This is field accumulates the number
+     * of cycles spent in the hypervisor. It is reset every time we update the
+     * guest TSC offset.
+     *
+     * This field is manipulated only by the functions defined below. It is
+     * never accessed directly outside this file.
+     */
     unsigned long long tsc_missing_cycles;
 };
 
+/*
+ * This function accumulates the given number of cycles to be removed from the
+ * guest TSC later.
+ */
 static inline void kvm_vcpu_miss_more_cycles(struct kvm_vcpu *vcpu, unsigned long cycles)
 {
     vcpu->tsc_missing_cycles += cycles;
 }
-
-static inline unsigned long kvm_vcpu_get_tsc_missing_cycles(struct kvm_vcpu *vcpu)
+/*
+ * This function unaccumulates the given number of cycles for the given vcpu.
+ * This is done when the guest spends time in virtual hardware (e.g.
+ * `__delay`).
+ */
+static inline void kvm_vcpu_unmiss_hardware_cycles(struct kvm_vcpu *vcpu, unsigned long cycles)
 {
-    return vcpu->tsc_missing_cycles;
+    BUG_ON(vcpu->tsc_missing_cycles < cycles);
+    vcpu->tsc_missing_cycles -= cycles;
 }
 
+/*
+ * Returns the accumulated amount of cycles and resets the accumulator.
+ */
 static inline unsigned long kvm_vcpu_get_and_reset_tsc_missing_cycles(struct kvm_vcpu *vcpu)
 {
-    unsigned long cycles = kvm_vcpu_get_tsc_missing_cycles(vcpu);
+    unsigned long cycles = vcpu->tsc_missing_cycles;
     vcpu->tsc_missing_cycles = 0;
     return cycles;
 }
