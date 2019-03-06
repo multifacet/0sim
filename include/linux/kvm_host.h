@@ -293,6 +293,14 @@ struct kvm_vcpu {
      * never accessed directly outside this file.
      */
     unsigned long long tsc_missing_cycles;
+
+    /*
+     * Because `tsc_missing_cycles` is unsigned, it can never be negative. So
+     * if we un-miss cycles after adjusting the offset, we have a dilemma!
+     * Instead, we keep track of the number of unmissed cycles here and we
+     * unmiss them by simply not missing cycles in the first place.
+     */
+    unsigned long long tsc_unmissing_cycles;
 };
 
 /*
@@ -310,8 +318,15 @@ static inline void kvm_vcpu_miss_more_cycles(struct kvm_vcpu *vcpu, unsigned lon
  */
 static inline void kvm_vcpu_unmiss_hardware_cycles(struct kvm_vcpu *vcpu, unsigned long cycles)
 {
-    BUG_ON(vcpu->tsc_missing_cycles < cycles);
-    vcpu->tsc_missing_cycles -= cycles;
+    // If there are already enough missing cycles, just decrease them.
+    // Otherwise, subtract as many as we can now and save the rest for later.
+    if (vcpu->tsc_missing_cycles >= cycles) {
+        vcpu->tsc_missing_cycles -= cycles;
+    } else {
+        cycles -= vcpu->tsc_missing_cycles;
+        vcpu->tsc_missing_cycles = 0;
+        vcpu->tsc_unmissing_cycles += cycles;
+    }
 }
 
 /*
@@ -319,9 +334,18 @@ static inline void kvm_vcpu_unmiss_hardware_cycles(struct kvm_vcpu *vcpu, unsign
  */
 static inline unsigned long kvm_vcpu_get_and_reset_tsc_missing_cycles(struct kvm_vcpu *vcpu)
 {
-    unsigned long cycles = vcpu->tsc_missing_cycles;
+    unsigned long missing_cycles = vcpu->tsc_missing_cycles;
+    unsigned long unmissing_cycles = vcpu->tsc_unmissing_cycles;
+
     vcpu->tsc_missing_cycles = 0;
-    return cycles;
+
+    if (missing_cycles >= unmissing_cycles) {
+        vcpu->tsc_unmissing_cycles = 0;
+        return missing_cycles - unmissing_cycles;
+    } else {
+        vcpu->tsc_unmissing_cycles -= missing_cycles;
+        return 0;
+    }
 }
 
 static inline int kvm_vcpu_exiting_guest_mode(struct kvm_vcpu *vcpu)
