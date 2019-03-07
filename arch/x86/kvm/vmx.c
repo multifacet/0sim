@@ -109,6 +109,11 @@ static u64 __read_mostly host_xss;
 static bool __read_mostly enable_pml = 1;
 module_param_named(pml, enable_pml, bool, S_IRUGO);
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static bool __read_mostly enable_tsc_offsetting = false;
+module_param(enable_tsc_offsetting, bool, S_IRUGO);
+#endif
+
 #define KVM_VMX_TSC_MULTIPLIER_MAX     0xffffffffffffffffULL
 
 #define KVM_GUEST_CR0_MASK (X86_CR0_NW | X86_CR0_CD)
@@ -2466,23 +2471,25 @@ static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adjustment)
 {
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-	u64 offset = vmcs_read64(TSC_OFFSET);
-	//u64 mult = vmcs_read64(TSC_MULTIPLIER);
-	//printk(KERN_INFO "adjust tsc offset %ld, mult %ld\n", offset, mult);
+    if (enable_tsc_offsetting) {
+        u64 offset = vmcs_read64(TSC_OFFSET);
+        //u64 mult = vmcs_read64(TSC_MULTIPLIER);
+        //printk(KERN_INFO "adjust tsc offset %ld, mult %ld\n", offset, mult);
 
-    // Warn if the adjustment is huge (4GHz => warn at ~1min).
-    const s64 too_big = 60l * 4000000000l;
-    if (adjustment >= too_big) {
-        printk(KERN_WARNING "Very large adjustment: %lld\n", adjustment);
+        // Warn if the adjustment is huge (4GHz => warn at ~1min).
+        const s64 too_big = 60l * 4000000000l;
+        if (adjustment >= too_big) {
+            printk(KERN_WARNING "Very large adjustment: %lld\n", adjustment);
+        }
+
+        vmcs_write64(TSC_OFFSET, offset + adjustment);
+        if (is_guest_mode(vcpu)) {
+            /* Even when running L2, the adjustment needs to apply to L1 */
+            to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
+        } else
+            trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
+                           offset + adjustment);
     }
-
-	vmcs_write64(TSC_OFFSET, offset + adjustment);
-	if (is_guest_mode(vcpu)) {
-		/* Even when running L2, the adjustment needs to apply to L1 */
-		to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
-	} else
-		trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
-					   offset + adjustment);
 #endif
 }
 
