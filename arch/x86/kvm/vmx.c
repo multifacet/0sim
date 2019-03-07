@@ -111,7 +111,7 @@ module_param_named(pml, enable_pml, bool, S_IRUGO);
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 static bool __read_mostly enable_tsc_offsetting = false;
-module_param(enable_tsc_offsetting, bool, S_IRUGO);
+module_param(enable_tsc_offsetting, bool, S_IRWXUGO);
 #endif
 
 #define KVM_VMX_TSC_MULTIPLIER_MAX     0xffffffffffffffffULL
