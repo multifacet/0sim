@@ -2021,7 +2021,9 @@ static void vmx_vcpu_pi_load(struct kvm_vcpu *vcpu, int cpu)
 			new.control) != old.control);
 }
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 static int prev_cpu = -1;
+#endif
 
 /*
  * Switches to specified vcpu, until a matching vcpu_put(), but assumes
@@ -2072,6 +2074,10 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		rdmsrl(MSR_IA32_SYSENTER_ESP, sysenter_esp);
 		vmcs_writel(HOST_IA32_SYSENTER_ESP, sysenter_esp); /* 22.2.3 */
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+        // Keep track of which cpu the vcpu is scheduled on. Warn if we switch.
+        // NOTE: this is a bit fake since it is a global, but a multicore VM
+        // should ideally have a per-vcpu value.
 		if (prev_cpu == -1) {
 			prev_cpu = cpu;
 		} else {
@@ -2080,15 +2086,15 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 			}
 		}
 
+		prev_cpu = cpu;
+#endif
+
 		/* Setup TSC multiplier */
 		if (cpu_has_vmx_tsc_scaling()) {
-			if (prev_cpu != cpu) {
-				vmcs_write64(TSC_MULTIPLIER,
-					     vcpu->arch.tsc_scaling_ratio);
-			}
+            printk(KERN_WARNING "Changing TSC multiplier on vcpu %d.\n", vcpu->vcpu_id);
+            vmcs_write64(TSC_MULTIPLIER,
+                     vcpu->arch.tsc_scaling_ratio);
 		}
-
-		prev_cpu = cpu;
 
 		vmx->loaded_vmcs->cpu = cpu;
 	}
@@ -2472,15 +2478,13 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
 {
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
     if (enable_tsc_offsetting) {
-        u64 offset = vmcs_read64(TSC_OFFSET);
-        //u64 mult = vmcs_read64(TSC_MULTIPLIER);
-        //printk(KERN_INFO "adjust tsc offset %ld, mult %ld\n", offset, mult);
-
         // Warn if the adjustment is huge (4GHz => warn at ~1min).
         const s64 too_big = 60l * 4000000000l;
         if (adjustment >= too_big) {
             printk(KERN_WARNING "Very large adjustment: %lld\n", adjustment);
         }
+
+        u64 offset = vmcs_read64(TSC_OFFSET);
 
         vmcs_write64(TSC_OFFSET, offset + adjustment);
         if (is_guest_mode(vcpu)) {

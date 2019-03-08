@@ -6699,6 +6699,8 @@ static inline bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
 		!vcpu->arch.apf.halted);
 }
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+
 #define BEHIND_THRESHOLD 10000000
 
 /*
@@ -6717,6 +6719,8 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     //
     // This depends on the assumption that the host TSC's of all cpus are roughly
     // synchronized, which may or may not be true.
+
+    // TODO: if (!enable_tsc_offsetting) return;
 
     int i;
 
@@ -6748,6 +6752,8 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
         return 0;
     }
 }
+
+#endif
 
 static int vcpu_run(struct kvm_vcpu *vcpu)
 {
@@ -6797,7 +6803,11 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
         // Yield the cpu if the scheduler requests it or if we need to slow
         // down this vcpu. Slowing down the vcpu is necessary whenever it
         // gets too far ahead of other vcpus.
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 		while (need_resched() || vcpu_is_ahead(vcpu)) {
+#else
+		while (need_resched()) {
+#endif
 			srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
 			cond_resched();
 			vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);

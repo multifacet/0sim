@@ -18,7 +18,7 @@ void kvm_x86_set_entry_exit_time(int too_low) {
     } else {
         entry_exit_time -= 10;
     }
-    printk(KERN_INFO "entry exit time calibrated to %llu\n", entry_exit_time);
+    printk(KERN_WARNING "entry exit time calibrated to %llu\n", entry_exit_time);
 }
 
 unsigned long long kvm_x86_get_entry_exit_time() {
