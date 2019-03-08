@@ -5932,12 +5932,13 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
         break;
 
     case KVM_HC_X86_NOP:
-        // fall through to default...
-
-    default:
         ret = 0;
 
         goto out;
+        break;
+
+    default:
+        // Continue below as normal...
         break;
     }
 

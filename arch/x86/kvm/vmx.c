@@ -2461,6 +2461,7 @@ static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 {
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 	printk(KERN_WARNING "not adjusting tsc offset. adjustment: %lld\n", adjustment);
+    // TODO(markm) adjust if !enable_tsc_offsetting
 #else
 	u64 offset = vmcs_read64(TSC_OFFSET);
 
