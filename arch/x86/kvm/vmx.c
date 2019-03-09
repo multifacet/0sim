@@ -110,7 +110,7 @@ static bool __read_mostly enable_pml = 1;
 module_param_named(pml, enable_pml, bool, S_IRUGO);
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-static bool __read_mostly enable_tsc_offsetting = false;
+static bool __read_mostly enable_tsc_offsetting = true;
 module_param(enable_tsc_offsetting, bool, 0644);
 #endif
 
@@ -2460,8 +2460,21 @@ static void vmx_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 static void vmx_adjust_tsc_offset_guest(struct kvm_vcpu *vcpu, s64 adjustment)
 {
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-	printk(KERN_WARNING "not adjusting tsc offset. adjustment: %lld\n", adjustment);
-    // TODO(markm) adjust if !enable_tsc_offsetting
+    u64 offset;
+
+    if (enable_tsc_offsetting) {
+        printk(KERN_WARNING "not adjusting tsc offset. adjustment: %lld\n", adjustment);
+    } else {
+        offset = vmcs_read64(TSC_OFFSET);
+
+        vmcs_write64(TSC_OFFSET, offset + adjustment);
+        if (is_guest_mode(vcpu)) {
+            /* Even when running L2, the adjustment needs to apply to L1 */
+            to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
+        } else
+            trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
+                           offset + adjustment);
+    }
 #else
 	u64 offset = vmcs_read64(TSC_OFFSET);
 
@@ -10814,6 +10827,12 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static bool vmx_tsc_offsetting_enabled() {
+    return enable_tsc_offsetting;
+}
+#endif
+
 static struct kvm_x86_ops vmx_x86_ops = {
 	.cpu_has_kvm_support = cpu_has_kvm_support,
 	.disabled_by_bios = vmx_disabled_by_bios,
@@ -10934,6 +10953,10 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.pmu_ops = &intel_pmu_ops,
 
 	.update_pi_irte = vmx_update_pi_irte,
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    .tsc_offsetting_enabled = vmx_tsc_offsetting_enabled,
+#endif
 };
 
 static int __init vmx_init(void)

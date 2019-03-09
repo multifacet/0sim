@@ -4260,6 +4260,12 @@ static void svm_sched_in(struct kvm_vcpu *vcpu, int cpu)
 {
 }
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+static bool svm_tsc_offsetting_enabled() {
+    return false;
+}
+#endif
+
 static struct kvm_x86_ops svm_x86_ops = {
 	.cpu_has_kvm_support = has_svm,
 	.disabled_by_bios = is_disabled,
@@ -4364,6 +4370,10 @@ static struct kvm_x86_ops svm_x86_ops = {
 	.sched_in = svm_sched_in,
 
 	.pmu_ops = &amd_pmu_ops,
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    .tsc_offsetting_enabled = svm_tsc_offsetting_enabled,
+#endif
 };
 
 static int __init svm_init(void)

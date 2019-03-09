@@ -6721,7 +6721,10 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // This depends on the assumption that the host TSC's of all cpus are roughly
     // synchronized, which may or may not be true.
 
-    // TODO: if (!enable_tsc_offsetting) return;
+    // If offsetting is not enabled
+    if (!vcpu->kvm->kvm_x86_ops->tsc_offsetting_enabled()) {
+        return 0;
+    }
 
     int i;
 
