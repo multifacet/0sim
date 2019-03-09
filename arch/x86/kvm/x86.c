@@ -6722,7 +6722,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // synchronized, which may or may not be true.
 
     // If offsetting is not enabled
-    if (!vcpu->kvm->kvm_x86_ops->tsc_offsetting_enabled()) {
+    if (!kvm_x86_ops->tsc_offsetting_enabled()) {
         return 0;
     }
 
