@@ -4261,7 +4261,7 @@ static void svm_sched_in(struct kvm_vcpu *vcpu, int cpu)
 }
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-static bool svm_tsc_offsetting_enabled() {
+static bool svm_tsc_offsetting_enabled(void) {
     return false;
 }
 #endif

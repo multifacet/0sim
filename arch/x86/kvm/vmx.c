@@ -10828,7 +10828,7 @@ out:
 }
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-static bool vmx_tsc_offsetting_enabled() {
+static bool vmx_tsc_offsetting_enabled(void) {
     return enable_tsc_offsetting;
 }
 #endif
