@@ -1255,13 +1255,14 @@ void wait_lapic_expire(struct kvm_vcpu *vcpu)
 
 	/* __delay is delay_tsc whenever the hardware has TSC, thus always.  */
 	if (guest_tsc < tsc_deadline) {
-#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-        // NOTE(markm): we don't actually need to respect wall time, but we
-        // want the guest to respect the right number of cycles.
-        kvm_vcpu_unmiss_hardware_cycles(vcpu, tsc_deadline - guest_tsc);
-#else
+        //TODO(markm)
+//#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+//        // NOTE(markm): we don't actually need to respect wall time, but we
+//        // want the guest to respect the right number of cycles.
+//        //kvm_vcpu_unmiss_hardware_cycles(vcpu, tsc_deadline - guest_tsc);
+//#else
 		__delay(tsc_deadline - guest_tsc);
-#endif
+//#endif
     }
 }
 
