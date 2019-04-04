@@ -8568,9 +8568,20 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
     unsigned long long start1 = rdtsc(), start2, end1, end2;
 
+    unsigned long long page_fault_time;
+    unsigned long long entry_exit_time;
+    unsigned long long elapsed;
+
+    // Account for page faults too.
+    if (kvm_vcpu_get_and_reset_pf_flag(vcpu)) {
+        page_fault_time = kvm_x86_get_page_fault_time();
+        kvm_vcpu_miss_more_cycles(vcpu, page_fault_time);
+    }
+
     // Actually offset guest TSC based on time up to now
-    unsigned long long entry_exit_time = kvm_x86_get_entry_exit_time();
-    unsigned long long elapsed = kvm_vcpu_get_and_reset_tsc_missing_cycles(vcpu);
+    entry_exit_time = kvm_x86_get_entry_exit_time();
+    elapsed = kvm_vcpu_get_and_reset_tsc_missing_cycles(vcpu);
+
     vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 
     // Update host total count

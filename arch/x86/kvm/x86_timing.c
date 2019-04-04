@@ -5,6 +5,7 @@
 
 static unsigned long long elapsed = 0;
 static unsigned long long entry_exit_time = 0;
+static unsigned long long page_fault_time = 0;
 
 void kvm_x86_elapse_time(unsigned long long extra) {
     elapsed += extra + entry_exit_time;
@@ -25,6 +26,16 @@ unsigned long long kvm_x86_get_entry_exit_time() {
     return entry_exit_time;
 }
 EXPORT_SYMBOL(kvm_x86_get_entry_exit_time);
+
+void kvm_x86_set_page_fault_time(unsigned long long time) {
+    page_fault_time = time;
+    printk(KERN_WARNING "page fault time calibrated to %llu\n", page_fault_time);
+}
+
+unsigned long long kvm_x86_get_page_fault_time() {
+    return page_fault_time;
+}
+EXPORT_SYMBOL(kvm_x86_get_page_fault_time);
 
 void kvm_x86_reset_time(void)
 {

@@ -26,6 +26,7 @@
 #define KVM_HC_X86_HOST_ELAPSED     9
 #define KVM_HC_X86_NOP     0xA
 #define KVM_HC_X86_CALIBRATE     0xB
+#define KVM_HC_X86_PF_TIME     0xC
 
 /*
  * hypercalls use architecture specific

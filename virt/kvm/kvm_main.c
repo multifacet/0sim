@@ -246,6 +246,7 @@ int kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 
     vcpu->tsc_missing_cycles = 0;
     vcpu->tsc_unmissing_cycles = 0;
+    vcpu->handled_pf = 0;
 
 	r = kvm_arch_vcpu_init(vcpu);
 	if (r < 0)

@@ -301,6 +301,11 @@ struct kvm_vcpu {
      * unmiss them by simply not missing cycles in the first place.
      */
     unsigned long long tsc_unmissing_cycles;
+
+    /*
+     * Set to true if we handled a page fault since the last reset.
+     */
+    bool handled_pf;
 };
 
 /*
@@ -346,6 +351,25 @@ static inline unsigned long kvm_vcpu_get_and_reset_tsc_missing_cycles(struct kvm
         vcpu->tsc_unmissing_cycles -= missing_cycles;
         return 0;
     }
+}
+
+/*
+ * Sets the `handled_pf` flag in the given vcpu.
+ */
+static inline void kvm_vcpu_set_pf_flag(struct kvm_vcpu *vcpu)
+{
+    vcpu->handled_pf = 1;
+}
+
+/*
+ * Returns true if there was a page fault that reset the flag since the last
+ * time we checked. Then resets the flag.
+ */
+static inline bool kvm_vcpu_get_and_reset_pf_flag(struct kvm_vcpu *vcpu)
+{
+    bool flag = vcpu->handled_pf;
+    vcpu->handled_pf = 0;
+    return flag;
 }
 
 static inline int kvm_vcpu_exiting_guest_mode(struct kvm_vcpu *vcpu)

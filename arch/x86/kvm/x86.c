@@ -5931,6 +5931,14 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
         goto out;
         break;
 
+    case KVM_HC_X86_PF_TIME:
+        // Calibrate with value from a0 (rbx)
+        kvm_x86_set_page_fault_time(a0);
+        ret = 0;
+
+        goto out;
+        break;
+
     case KVM_HC_X86_NOP:
         ret = 0;
 
