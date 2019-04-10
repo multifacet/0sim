@@ -36,6 +36,7 @@
 #include <asm/smap.h>
 #include <asm/pgtable_types.h>
 #include <linux/err.h>
+#include <linux/zerosim-trace.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
 #include <linux/elf-em.h>
@@ -182,7 +183,11 @@ entry_SYSCALL_64_fastpath:
 #endif
 	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
 	movq	%r10, %rcx
+    call    zerosim_trace_syscall_start
 	call	*sys_call_table(, %rax, 8)
+    pushq   %rax        /* return value of syscall */
+    call    zerosim_trace_syscall_end
+    popq    %rax        /* pop return value back to rax */
 	movq	%rax, RAX(%rsp)
 1:
 /*
