@@ -181,8 +181,32 @@ entry_SYSCALL_64_fastpath:
 	cmpl	$__NR_syscall_max, %eax
 #endif
 	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
-	movq	%r10, %rcx
+    movq %r10, %rcx
+
+    /* pass &pt_regs == %rsp */
+    movq    %rsp, %rdi
+    call    zerosim_trace_syscall_start
+
+    /* restore caller-saved registers for the actual syscall */
+    movq    ORIG_RAX(%rsp), %rax
+    movq    RDX(%rsp), %rdx
+    movq    RDI(%rsp), %rdi
+    movq    RSI(%rsp), %rsi
+    movq    R8(%rsp), %r8
+    movq    R9(%rsp), %r9
+    movq    R10(%rsp), %rcx
+
 	call	*sys_call_table(, %rax, 8)
+
+    pushq   %rax    /* save return value */
+
+    /* pass retval, &pt_regs */
+    movq    %rax, %rdi
+    leaq    8(%rsp), %rsi
+    call    zerosim_trace_syscall_end
+
+    popq   %rax    /* retore return value */
+
 	movq	%rax, RAX(%rsp)
 1:
 /*
@@ -310,7 +334,7 @@ GLOBAL(int_ret_from_sys_call)
 	/* If this changed %rcx, it was not canonical */
 	cmpq	%rcx, %r11
 	jne	opportunistic_sysret_failed
-
+;
 	cmpq	$__USER_CS, CS(%rsp)		/* CS must match SYSRET */
 	jne	opportunistic_sysret_failed
 
@@ -539,7 +563,16 @@ END(irq_entries_start)
 	/* We entered an interrupt context - irqs are off: */
 	TRACE_IRQS_OFF
 
+    /* rdi = &pt_regs */
+    call    zerosim_trace_interrupt_start
+    /* need to restore rdi since it may have been clobbered */
+    movq    (%rsp), %rdi
+
 	call	\func	/* rdi points to pt_regs */
+
+    /* need to restore rdi since it may have been clobbered */
+    movq    (%rsp), %rdi
+    call    zerosim_trace_interrupt_end
 	.endm
 
 	/*
@@ -772,7 +805,17 @@ ENTRY(\sym)
 	subq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
 	.endif
 
+    pushq %rsi
+    pushq %rdi
+    call zerosim_trace_exception_start  /* rbx is callee-saved */
+    movq (%rsp), %rdi       /* restore args for handler */
+    movq 8(%rsp), %rsi
+
 	call	\do_sym
+
+    popq %rdi
+    popq %rsi
+    call zerosim_trace_exception_end  /* rbx is callee-saved */
 
 	.if \shift_ist != -1
 	addq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
@@ -808,7 +851,17 @@ ENTRY(\sym)
 	xorl	%esi, %esi			/* no error code */
 	.endif
 
+    pushq %rsi
+    pushq %rdi
+    call zerosim_trace_exception_start  /* rbx is callee-saved */
+    movq (%rsp), %rdi       /* restore args for handler */
+    movq 8(%rsp), %rsi
+
 	call	\do_sym
+
+    popq %rdi
+    popq %rsi
+    call zerosim_trace_exception_end  /* rbx is callee-saved */
 
 	jmp	error_exit			/* %ebx: no swapgs flag */
 	.endif
@@ -1125,7 +1178,7 @@ END(error_entry)
 
 
 /*
- * On entry, EBS is a "return to kernel mode" flag:
+ * On entry, EBX is a "return to kernel mode" flag:
  *   1: already in kernel mode, don't need SWAPGS
  *   0: user gsbase is loaded, we need SWAPGS and standard preparation for return to usermode
  */

@@ -74,6 +74,7 @@
 #include <linux/binfmts.h>
 #include <linux/context_tracking.h>
 #include <linux/compiler.h>
+#include <linux/zerosim-trace.h>
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
@@ -2593,6 +2594,9 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	}
 
 	tick_nohz_task_switch();
+
+    zerosim_trace_task_switch(prev, current);
+
 	return rq;
 }
 

@@ -26,6 +26,7 @@
 #include <linux/smpboot.h>
 #include <linux/tick.h>
 #include <linux/irq.h>
+#include <linux/zerosim-trace.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/irq.h>
@@ -237,6 +238,8 @@ asmlinkage __visible void __do_softirq(void)
 	__u32 pending;
 	int softirq_bit;
 
+    zerosim_trace_softirq_start();
+
 	/*
 	 * Mask out PF_MEMALLOC s current task context is borrowed for the
 	 * softirq. A softirq handled such as network RX might set PF_MEMALLOC
@@ -299,6 +302,8 @@ restart:
 	__local_bh_enable(SOFTIRQ_OFFSET);
 	WARN_ON_ONCE(in_interrupt());
 	tsk_restore_flags(current, old_flags, PF_MEMALLOC);
+
+    zerosim_trace_softirq_end();
 }
 
 asmlinkage __visible void do_softirq(void)

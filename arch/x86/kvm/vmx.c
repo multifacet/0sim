@@ -32,6 +32,7 @@
 #include <linux/slab.h>
 #include <linux/tboot.h>
 #include <linux/hrtimer.h>
+#include <linux/zerosim-trace.h>
 #include "kvm_cache_regs.h"
 #include "x86.h"
 
@@ -8611,6 +8612,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)
 		vmx_set_interrupt_shadow(vcpu, 0);
 
+    zerosim_trace_vm_enter(vcpu->vcpu_id);
+
     // Actually offset guest TSC based on time up to now.
     // Assumes that the vcpu is pinned to a single host core.
     if (vcpu->zerosim.use_start_missing) {
@@ -8778,7 +8781,18 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
             vcpu->zerosim.state = ZEROSIM_VCPU_HLT;
             break;
 
+        case EXIT_REASON_EXTERNAL_INTERRUPT:
+            zerosim_trace_vm_exit(vmx->exit_reason,
+                    (unsigned long) vmcs_read32(VM_EXIT_INTR_INFO) & INTR_INFO_VECTOR_MASK);
+            break;
+
+        case EXIT_REASON_MSR_WRITE:
+            zerosim_trace_vm_exit(vmx->exit_reason,
+                    (unsigned long) vcpu->arch.regs[VCPU_REGS_RCX]);
+            break;
+
         default:
+            zerosim_trace_vm_exit(vmx->exit_reason, vmcs_readl(EXIT_QUALIFICATION));
             break;
     }
 
