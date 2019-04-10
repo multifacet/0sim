@@ -914,7 +914,25 @@ apicinterrupt IRQ_WORK_VECTOR			irq_work_interrupt		smp_irq_work_interrupt
 	movq	%r12, %rdx			/* Move CR2 into 3rd argument */
 	.endif
 
+    // zerosim_trace here
+    // Need to restore state afterwards as follows:
+    //  - rsi = error code
+    //  - rdi = &pt_regs
+    //  - rdx = CR2
+    pushq %rsi
+    pushq %rdi
+    pushq %rdx
+    call zerosim_trace_exception_start
+    movq (%rsp), %rdx
+    movq 8(%rsp), %rdi
+    movq 16(%rsp), %rsi
+
 	call	\do_sym
+
+    popq %rdx
+    popq %rdi
+    popq %rsi
+    call zerosim_trace_exception_end
 
 	.if \shift_ist != -1
 	addq	$\ist_offset, CPU_TSS_IST(\shift_ist)

@@ -26,6 +26,7 @@
 #include <linux/livepatch.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
+#include <linux/zerosim-trace.h>
 
 #include <asm/desc.h>
 #include <asm/traps.h>
@@ -283,6 +284,8 @@ __visible void do_syscall_64(unsigned long nr, struct pt_regs *regs)
 {
 	struct thread_info *ti;
 
+    zerosim_trace_syscall_start(regs);
+
 	enter_from_user_mode();
 	local_irq_enable();
 	ti = current_thread_info();
@@ -300,6 +303,8 @@ __visible void do_syscall_64(unsigned long nr, struct pt_regs *regs)
 		regs->ax = x32_sys_call_table[nr](regs);
 #endif
 	}
+
+    zerosim_trace_syscall_end(regs->ax, regs);
 
 	syscall_return_slowpath(regs);
 }

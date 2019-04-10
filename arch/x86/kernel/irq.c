@@ -12,6 +12,7 @@
 #include <linux/delay.h>
 #include <linux/export.h>
 #include <linux/irq.h>
+#include <linux/zerosim-trace.h>
 
 #include <asm/apic.h>
 #include <asm/io_apic.h>
@@ -239,6 +240,8 @@ __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 
 	entering_irq();
 
+    zerosim_trace_interrupt_start(regs);
+
 	/* entering_irq() tells RCU that we're not quiescent.  Check it. */
 	RCU_LOCKDEP_WARN(!rcu_is_watching(), "IRQ failed to wake up RCU");
 
@@ -259,6 +262,8 @@ __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 			__this_cpu_write(vector_irq[vector], VECTOR_UNUSED);
 		}
 	}
+
+    zerosim_trace_interrupt_end(regs);
 
 	exiting_irq();
 

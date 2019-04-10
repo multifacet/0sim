@@ -1422,4 +1422,8 @@ long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 			    unsigned int nsops,
 			    const struct old_timespec32 __user *timeout);
 
+asmlinkage long sys_zerosim_trace_begin(void);
+asmlinkage long sys_zerosim_trace_snapshot(void *user_buf, unsigned long len);
+asmlinkage long sys_zerosim_trace_size(unsigned long ntrace);
+
 #endif

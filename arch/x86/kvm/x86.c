@@ -57,6 +57,7 @@
 #include <linux/mem_encrypt.h>
 #include <linux/proc_fs.h>
 #include <linux/zerosim-params.h>
+#include <linux/zerosim-trace.h>
 
 #include <trace/events/kvm.h>
 
@@ -8808,6 +8809,7 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
                 // Might have been in a hlt, but we are stalled now.
                 vcpu->zerosim.state = ZEROSIM_VCPU_STALLED;
 
+                zerosim_trace_vm_delay_begin(vcpu->vcpu_id, behind);
                 if (zerosim_delta == ZEROSIM_YIELD) {
                     srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
                     cond_resched();
@@ -8819,6 +8821,7 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
                     // delay by delta
                     ndelay(zerosim_delta);
                 }
+                zerosim_trace_vm_delay_end(vcpu->vcpu_id);
             } else {
                 if (zerosim_verbose & (1<<4)) {
                     printk(KERN_WARNING "[%d] not pausing\n", vcpu->vcpu_id);

@@ -402,3 +402,8 @@
 545	x32	execveat		__x32_compat_sys_execveat/ptregs
 546	x32	preadv2			__x32_compat_sys_preadv64v2
 547	x32	pwritev2		__x32_compat_sys_pwritev64v2
+
+# 0sim
+700 64 zerosim_trace_begin __x64_sys_zerosim_trace_begin
+701 64 zerosim_trace_snapshot __x64_sys_zerosim_trace_snapshot
+702 64 zerosim_trace_size __x64_sys_zerosim_trace_size

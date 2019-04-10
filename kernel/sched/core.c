@@ -3260,6 +3260,9 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	}
 
 	tick_nohz_task_switch();
+
+    zerosim_trace_task_switch(prev, current);
+
 	return rq;
 }
 
