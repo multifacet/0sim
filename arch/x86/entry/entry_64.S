@@ -183,29 +183,34 @@ entry_SYSCALL_64_fastpath:
 #endif
 	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
 
-    /* pass &pt_regs == %rsp */
-    movq    %rsp, %rdi
-    call    zerosim_trace_syscall_start
+    // TODO(markm)
+    // /* pass &pt_regs == %rsp */
+    // movq    %rsp, %rdi
+    // call    zerosim_trace_syscall_start
 
-    /* restore caller-saved registers for the actual syscall */
-    movq    ORIG_RAX(%rsp), %rax
-    movq    RDX(%rsp), %rdx
-    movq    RDI(%rsp), %rdi
-    movq    RSI(%rsp), %rsi
-    movq    R8(%rsp), %r8
-    movq    R9(%rsp), %r9
-    movq    R10(%rsp), %rcx
+    // TODO(markm)
+    // /* restore caller-saved registers for the actual syscall */
+    // movq    ORIG_RAX(%rsp), %rax
+    // movq    RDX(%rsp), %rdx
+    // movq    RDI(%rsp), %rdi
+    // movq    RSI(%rsp), %rsi
+    // movq    R8(%rsp), %r8
+    // movq    R9(%rsp), %r9
+    // movq    R10(%rsp), %rcx
 
 	call	*sys_call_table(, %rax, 8)
 
-    pushq   %rax    /* save return value */
+    // TODO(markm)
+    // pushq   %rax    /* save return value */
 
-    /* pass retval, &pt_regs */
-    movq    %rax, %rdi
-    leaq    8(%rsp), %rsi
-    call    zerosim_trace_syscall_end
+    // TODO(markm)
+    // /* pass retval, &pt_regs */
+    // movq    %rax, %rdi
+    // leaq    8(%rsp), %rsi
+    // call    zerosim_trace_syscall_end
 
-    popq   %rax    /* retore return value */
+    // TODO(markm)
+    // popq   %rax    /* retore return value */
 
 	movq	%rax, RAX(%rsp)
 1:
@@ -563,17 +568,18 @@ END(irq_entries_start)
 	/* We entered an interrupt context - irqs are off: */
 	TRACE_IRQS_OFF
 
-    /* rdi = &pt_regs */
-    call    zerosim_trace_interrupt_start
-
-    /* need to restore rdi since it may have been clobbered */
-    movq    (%rsp), %rdi
+    // TODO(markm)
+    // /* rdi = &pt_regs */
+    // call    zerosim_trace_interrupt_start
+    // /* need to restore rdi since it may have been clobbered */
+    // movq    (%rsp), %rdi
 
 	call	\func	/* rdi points to pt_regs */
 
-    /* need to restore rdi since it may have been clobbered */
-    movq    (%rsp), %rdi
-    call    zerosim_trace_interrupt_end
+    // TODO(markm)
+    // /* need to restore rdi since it may have been clobbered */
+    // movq    (%rsp), %rdi
+    // call    zerosim_trace_interrupt_end
 	.endm
 
 	/*
@@ -806,18 +812,19 @@ ENTRY(\sym)
 	subq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
 	.endif
 
-    pushq %rsi
-    pushq %rdi
-    call zerosim_trace_exception_start  /* rbx is callee-saved */
-
-    movq (%rsp), %rdi       /* restore args for handler */
-    movq *(%rsp), %rsi
+    // TODO(markm)
+    // pushq %rsi
+    // pushq %rdi
+    // call zerosim_trace_exception_start  /* rbx is callee-saved */
+    // movq (%rsp), %rdi       /* restore args for handler */
+    // movq *(%rsp), %rsi
 
 	call	\do_sym
 
-    popq %rdi
-    popq %rsi
-    call zerosim_trace_exception_end  /* rbx is callee-saved */
+    // TODO(markm)
+    // popq %rdi
+    // popq %rsi
+    // call zerosim_trace_exception_end  /* rbx is callee-saved */
 
 	.if \shift_ist != -1
 	addq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
@@ -853,18 +860,19 @@ ENTRY(\sym)
 	xorl	%esi, %esi			/* no error code */
 	.endif
 
-    pushq %rsi
-    pushq %rdi
-    call zerosim_trace_exception_start  /* rbx is callee-saved */
-
-    movq (%rsp), %rdi       /* restore args for handler */
-    movq *(%rsp), %rsi
+    // TODO(markm)
+    // pushq %rsi
+    // pushq %rdi
+    // call zerosim_trace_exception_start  /* rbx is callee-saved */
+    // movq (%rsp), %rdi       /* restore args for handler */
+    // movq *(%rsp), %rsi
 
 	call	\do_sym
 
-    popq %rdi
-    popq %rsi
-    call zerosim_trace_exception_end  /* rbx is callee-saved */
+    // TODO(markm)
+    // popq %rdi
+    // popq %rsi
+    // call zerosim_trace_exception_end  /* rbx is callee-saved */
 
 	jmp	error_exit			/* %ebx: no swapgs flag */
 	.endif
