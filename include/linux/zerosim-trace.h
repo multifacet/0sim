@@ -2,11 +2,14 @@
 #define _ZEROSIM_TRACE_H_
 
 #include <linux/types.h>
+#include <linux/sched.h>
+
+#include <asm/traps.h>
 
 /*
  * Trace from task switch. We are given the previous and current (new) tasks.
  */
-void zerosim_trace_task_switch(struct task *prev, struct task *next);
+void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *next);
 
 /*
  * Trace from syscall handler start. %rax contains the syscall nr.

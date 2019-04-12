@@ -7,6 +7,14 @@
 
 #include <linux/zerosim-trace.h>
 
+#include <linux/syscalls.h>
+#include <linux/spinlock.h>
+#include <linux/compiler.h>
+#include <linux/slab.h>
+
+#include <asm/ptrace.h>
+#include <asm/topology.h>
+
 /* Various values for trace->flags */
 
 // Type of event
@@ -80,15 +88,15 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct trace_buffer, zerosim_trace_buffers);
  * Init the zerosim tracer. This will allocate tracing buffer space for
  * everything. This happens during boot after arch initcalls.
  */
-static void zerosim_trace_init()
+static void zerosim_trace_init(void)
 {
     struct trace_buffer * tb;
-    int node;
+    int cpu, node;
 
     for_each_possible_cpu(cpu) {
-        node = numa_node_of_cpu(cpu);
+        node = cpu_to_node(cpu);
 
-        tb = per_cpu(zerosim_trace_buffers, cpu);
+        tb = &per_cpu(zerosim_trace_buffers, cpu);
 
         spin_lock_init(&tb->buffer_lock);
 
@@ -112,9 +120,10 @@ subsys_initcall(zerosim_trace_init);
 static void grab_all_locks()
 {
     struct trace_buffer * tb;
+    int cpu;
 
     for_each_possible_cpu(cpu) {
-        tb = per_cpu(zerosim_trace_buffers, cpu);
+        tb = &per_cpu(zerosim_trace_buffers, cpu);
         spin_lock_irqsave(&tb->buffer_lock);
     }
 }
@@ -122,9 +131,10 @@ static void grab_all_locks()
 static void release_all_locks()
 {
     struct trace_buffer * tb;
+    int cpu;
 
     for_each_possible_cpu(cpu) {
-        tb = per_cpu(zerosim_trace_buffers, cpu);
+        tb = &per_cpu(zerosim_trace_buffers, cpu);
         spin_unlock_irqrestore(&tb->buffer_lock);
     }
 }
@@ -180,13 +190,13 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
 
     // Read to user buff. This may block.
     for_each_possible_cpu(cpu) {
-        tb = per_cpu(zerosim_trace_buffers, cpu);
+        tb = &per_cpu(zerosim_trace_buffers, cpu);
         copy_to_user(user_buf, tb->buf, TRACE_BUF_SIZE * sizeof(struct trace));
     }
 
     // Zero all trace buffers
     for_each_possible_cpu(cpu) {
-        tb = per_cpu(zerosim_trace_buffers, cpu);
+        tb = &per_cpu(zerosim_trace_buffers, cpu);
         memset(tb->buf, 0, TRACE_BUF_SIZE * sizeof(struct trace));
     }
 
@@ -218,7 +228,7 @@ static inline zerosim_trace_event(struct trace *ev)
     spin_unlock_irqrestore(&buf->buffer_lock);
 }
 
-void zerosim_trace_task_switch(struct task *prev, struct task *current)
+void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *current)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
@@ -235,11 +245,11 @@ void zerosim_trace_task_switch(struct task *prev, struct task *current)
     zerosim_trace_event(&tr);
 }
 
-asmlinkage void zerosim_trace_syscall_start(struct pt_regs)
+asmlinkage void zerosim_trace_syscall_start(struct pt_regs *reg)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = (u32) pt_regs->orig_ax, // syscall nr
+        .id = (u32) regs->orig_ax, // syscall nr
         .flags = ZEROSIM_TRACE_SYSCALL | ZEROSIM_TRACE_START,
     };
 
@@ -252,11 +262,11 @@ asmlinkage void zerosim_trace_syscall_start(struct pt_regs)
     zerosim_trace_event(&tr);
 }
 
-asmlinkage void zerosim_trace_syscall_end(u64 syscall_retval, struct pt_regs)
+asmlinkage void zerosim_trace_syscall_end(u64 syscall_retval, struct pt_regs *regs)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = (u32) pt_regs->orig_ax, // syscall nr
+        .id = (u32) regs->orig_ax, // syscall nr
         .flags = ZEROSIM_TRACE_SYSCALL,
     };
 
@@ -273,7 +283,7 @@ void zerosim_trace_interrupt_start(struct pt_regs *regs)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = (u32) pt_regs->orig_ax, // interrupt nr
+        .id = (u32) regs->orig_ax, // interrupt nr
         .flags = ZEROSIM_TRACE_INTERRUPT | ZEROSIM_TRACE_START,
     };
 
@@ -290,7 +300,7 @@ void zerosim_trace_interrupt_end(struct pt_regs *regs)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = (u32) pt_regs->orig_ax, // interrupt nr
+        .id = (u32) regs->orig_ax, // interrupt nr
         .flags = ZEROSIM_TRACE_INTERRUPT,
     };
 
