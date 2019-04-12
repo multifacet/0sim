@@ -87,7 +87,7 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct trace_buffer, zerosim_trace_buffers);
 
 /*
  * Init the zerosim tracer. This will allocate tracing buffer space for
- * everything. This happens during boot after arch initcalls.
+ * everything. This happens during boot before the init process is created.
  */
 static __init int zerosim_trace_init(void)
 {
@@ -116,7 +116,6 @@ static __init int zerosim_trace_init(void)
 
     return 0;
 }
-subsys_initcall(zerosim_trace_init);
 
 static long grab_all_locks(void)
 {
