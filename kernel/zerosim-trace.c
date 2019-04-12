@@ -85,11 +85,7 @@ static atomic_t ready = ATOMIC_INIT(0);
 /* Each CPU has a buffer */
 DEFINE_PER_CPU_SHARED_ALIGNED(struct trace_buffer, zerosim_trace_buffers);
 
-/*
- * Init the zerosim tracer. This will allocate tracing buffer space for
- * everything. This happens during boot before the init process is created.
- */
-static __init int zerosim_trace_init(void)
+__init int zerosim_trace_init(void)
 {
     struct trace_buffer * tb;
     int cpu, node;

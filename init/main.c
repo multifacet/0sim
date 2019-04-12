@@ -81,6 +81,7 @@
 #include <linux/integrity.h>
 #include <linux/proc_ns.h>
 #include <linux/io.h>
+#include <linux/zerosim-trace.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>

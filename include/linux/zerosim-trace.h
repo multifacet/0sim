@@ -7,6 +7,12 @@
 #include <asm/traps.h>
 
 /*
+ * Init the zerosim tracer. This will allocate tracing buffer space for
+ * everything. This happens during boot before the init process is created.
+ */
+__init int zerosim_trace_init(void);
+
+/*
  * Trace from task switch. We are given the previous and current (new) tasks.
  */
 void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *curr);
