@@ -181,6 +181,7 @@ entry_SYSCALL_64_fastpath:
 	cmpl	$__NR_syscall_max, %eax
 #endif
 	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
+    movq %r10, %rcx
 
     // TODO(markm)
     // /* pass &pt_regs == %rsp */
