@@ -88,7 +88,7 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct trace_buffer, zerosim_trace_buffers);
  * Init the zerosim tracer. This will allocate tracing buffer space for
  * everything. This happens during boot after arch initcalls.
  */
-static void zerosim_trace_init(void)
+static __init int zerosim_trace_init(void)
 {
     struct trace_buffer * tb;
     int cpu, node;
@@ -106,7 +106,7 @@ static void zerosim_trace_init(void)
 
         if (tb->buf == NULL) {
             printk(KERN_WARNING "Unable to init zerosim_trace. kmalloc failed.\n");
-            return;
+            return -1; // Does nothing
         }
 
         tb->len = TRACE_BUF_SIZE;
@@ -114,10 +114,12 @@ static void zerosim_trace_init(void)
     }
 
     atomic_set(&ready, 1);
+
+    return 0;
 }
 subsys_initcall(zerosim_trace_init);
 
-static void grab_all_locks()
+static void grab_all_locks(void)
 {
     struct trace_buffer * tb;
     int cpu;
@@ -128,7 +130,7 @@ static void grab_all_locks()
     }
 }
 
-static void release_all_locks()
+static void release_all_locks(void)
 {
     struct trace_buffer * tb;
     int cpu;
@@ -172,6 +174,7 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
                 unsigned long,  len)
 {
     struct trace_buffer * tb;
+    int cpu;
 
     grab_all_locks();
 
