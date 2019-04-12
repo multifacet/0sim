@@ -122,7 +122,7 @@ static long grab_all_locks(void)
 {
     struct trace_buffer * tb;
     int cpu;
-    unsigned long flags;
+    unsigned long flags = 0;
 
     for_each_possible_cpu(cpu) {
         tb = &per_cpu(zerosim_trace_buffers, cpu);
@@ -255,11 +255,12 @@ static inline void zerosim_trace_event(struct trace *ev)
     spin_unlock_irqrestore(&buf->buffer_lock, flags);
 }
 
-void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *current)
+void zerosim_trace_task_switch(struct task_struct *prev,
+                               struct task_struct *curr)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = (u32) current->pid,
+        .id = (u32) curr->pid,
         .flags = ZEROSIM_TRACE_TASK_SWITCH,
     };
 
