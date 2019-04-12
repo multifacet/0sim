@@ -214,7 +214,7 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
         user_buf_offset += TRACE_BUF_SIZE;
 
         if (uncopied > 0) {
-            printk(KERN_WARN "unable to copy %lu bytes\n", uncopied);
+            printk(KERN_WARNING "unable to copy %lu bytes\n", uncopied);
         }
     }
 
@@ -227,6 +227,8 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
     flags = grab_all_locks();
     atomic_set(&ready, 1);
     release_all_locks(flags);
+
+    return 0;
 }
 
 /* Actually add the given event into the trace buffer, potentially overwriting
@@ -241,7 +243,7 @@ static inline void zerosim_trace_event(struct trace *ev)
     spin_lock_irqsave(&buf->buffer_lock, flags);
 
     // check if tracing is enabled and ready
-    if (!atomic_read(&tracing_enabled) || !atomic_read(ready)) {
+    if (!atomic_read(&tracing_enabled) || !atomic_read(&ready)) {
         spin_unlock_irqrestore(&buf->buffer_lock, flags);
         return;
     }
