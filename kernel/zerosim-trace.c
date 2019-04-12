@@ -11,6 +11,7 @@
 #include <linux/spinlock.h>
 #include <linux/compiler.h>
 #include <linux/slab.h>
+#include <linux/percpu.h>
 
 #include <asm/ptrace.h>
 #include <asm/topology.h>
@@ -160,7 +161,7 @@ SYSCALL_DEFINE0(zerosim_trace_begin)
 {
     unsigned long flags = grab_all_locks();
 
-    if (!READ_ONCE(ready)) {
+    if (!atomic_read(&ready)) {
         release_all_locks(flags);
         return -ENOMEM;
     }
@@ -227,12 +228,12 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
  */
 static inline void zerosim_trace_event(struct trace *ev)
 {
-    struct trace_buffer *buf = &per_cpu(zerosim_trace_buffers);
+    struct trace_buffer *buf = &per_cpu(zerosim_trace_buffers, my_cpu_offset);
     unsigned long flags;
     spin_lock_irqsave(&buf->buffer_lock, flags);
 
     // check if tracing is enabled and ready
-    if (!READ_ONCE(tracing_enabled) || !READ_ONCE(ready)) {
+    if (!atomic_read(&tracing_enabled) || !atomic_read(ready)) {
         spin_unlock_irqrestore(&buf->buffer_lock);
         return;
     }
@@ -252,12 +253,6 @@ void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *cur
         .flags = ZEROSIM_TRACE_TASK_SWITCH,
     };
 
-    // // check if tracing is enabled to avoid (probabalistically) waiting for the
-    // // lock if someone is snapshotting.
-    // if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
-    //     return;
-    // }
-
     zerosim_trace_event(&tr);
 }
 
@@ -268,12 +263,6 @@ asmlinkage void zerosim_trace_syscall_start(struct pt_regs *reg)
         .id = (u32) regs->orig_ax, // syscall nr
         .flags = ZEROSIM_TRACE_SYSCALL | ZEROSIM_TRACE_START,
     };
-
-    // // check if tracing is enabled to avoid (probabalistically) waiting for the
-    // // lock if someone is snapshotting.
-    // if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
-    //     return;
-    // }
 
     zerosim_trace_event(&tr);
 }
@@ -286,12 +275,6 @@ asmlinkage void zerosim_trace_syscall_end(u64 syscall_retval, struct pt_regs *re
         .flags = ZEROSIM_TRACE_SYSCALL,
     };
 
-    // // check if tracing is enabled to avoid (probabalistically) waiting for the
-    // // lock if someone is snapshotting.
-    // if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
-    //     return;
-    // }
-
     zerosim_trace_event(&tr);
 }
 
@@ -302,12 +285,6 @@ void zerosim_trace_interrupt_start(struct pt_regs *regs)
         .id = (u32) regs->orig_ax, // interrupt nr
         .flags = ZEROSIM_TRACE_INTERRUPT | ZEROSIM_TRACE_START,
     };
-
-    // // check if tracing is enabled to avoid (probabalistically) waiting for the
-    // // lock if someone is snapshotting.
-    // if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
-    //     return;
-    // }
 
     zerosim_trace_event(&tr);
 }
@@ -320,12 +297,6 @@ void zerosim_trace_interrupt_end(struct pt_regs *regs)
         .flags = ZEROSIM_TRACE_INTERRUPT,
     };
 
-    // // check if tracing is enabled to avoid (probabalistically) waiting for the
-    // // lock if someone is snapshotting.
-    // if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
-    //     return;
-    // }
-
     zerosim_trace_event(&tr);
 }
 
@@ -337,12 +308,6 @@ dotraplinkage void zerosim_trace_exception_start(struct pt_regs *regs, long erro
         .flags = ZEROSIM_TRACE_FAULT | ZEROSIM_TRACE_START,
     };
 
-    // // check if tracing is enabled to avoid (probabalistically) waiting for the
-    // // lock if someone is snapshotting.
-    // if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
-    //     return;
-    // }
-
     zerosim_trace_event(&tr);
 }
 
@@ -353,12 +318,6 @@ dotraplinkage void zerosim_trace_exception_end(struct pt_regs *regs, long error_
         .id = (u32) error_code,
         .flags = ZEROSIM_TRACE_FAULT,
     };
-
-    // // check if tracing is enabled to avoid (probabalistically) waiting for the
-    // // lock if someone is snapshotting.
-    // if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
-    //     return;
-    // }
 
     zerosim_trace_event(&tr);
 }
