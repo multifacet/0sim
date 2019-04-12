@@ -3,19 +3,40 @@
 
 #include <linux/types.h>
 
-// Trace task switch
+/*
+ * Trace from task switch. We are given the previous and current (new) tasks.
+ */
 void zerosim_trace_task_switch(struct task *prev, struct task *next);
 
-// Trace syscalls
+/*
+ * Trace from syscall handler start. %rax contains the syscall nr.
+ */
 asmlinkage void zerosim_trace_syscall_start(struct pt_regs *);
+
+/*
+ * Trace from syscall handler end. %rax still contains the syscall nr.
+ * `syscall_retval` is the return value of the system call.
+ */
 asmlinkage void zerosim_trace_syscall_end(u64 syscall_retval, struct pt_regs *);
 
-// Trace IRQs and IPIs
+/*
+ * Start trace from interrupt handler for the given vector.
+ */
 void zerosim_trace_interrupt_start(struct pt_regs *regs);
+
+/*
+ * End trace from interrupt handler for the given vector.
+ */
 void zerosim_trace_interrupt_end(struct pt_regs *regs);
 
-// Trace Exception
+/*
+ * Start trace from exception handler for the given exception.
+ */
 dotraplinkage void zerosim_trace_exception_start(struct pt_regs *regs, long error_code);
+
+/*
+ * Start trace from exception handler for the given exception.
+ */
 dotraplinkage void zerosim_trace_exception_end(struct pt_regs *regs, long error_code);
 
 #endif
