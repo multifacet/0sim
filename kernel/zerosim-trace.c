@@ -132,6 +132,8 @@ static long grab_all_locks(void)
             spin_lock(&tb->buffer_lock);
         }
     }
+
+    return flags;
 }
 
 static void release_all_locks(unsigned long flags)
@@ -158,7 +160,7 @@ SYSCALL_DEFINE0(zerosim_trace_begin)
 {
     unsigned long flags = grab_all_locks();
 
-    if (!READ_ONCE(&ready)) {
+    if (!READ_ONCE(ready)) {
         release_all_locks(flags);
         return -ENOMEM;
     }
@@ -223,14 +225,14 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
  *
  * The buffer lock _should not_ be held by the caller.
  */
-static inline zerosim_trace_event(struct trace *ev)
+static inline void zerosim_trace_event(struct trace *ev)
 {
-    struct trace_buffer *buf = this_cpu_ptr(zerosim_trace_buffers);
+    struct trace_buffer *buf = &per_cpu(zerosim_trace_buffers);
     unsigned long flags;
     spin_lock_irqsave(&buf->buffer_lock, flags);
 
     // check if tracing is enabled and ready
-    if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
+    if (!READ_ONCE(tracing_enabled) || !READ_ONCE(ready)) {
         spin_unlock_irqrestore(&buf->buffer_lock);
         return;
     }
