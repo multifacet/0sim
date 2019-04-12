@@ -36,7 +36,6 @@
 #include <asm/smap.h>
 #include <asm/pgtable_types.h>
 #include <linux/err.h>
-#include <linux/zerosim-trace.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
 #include <linux/elf-em.h>
