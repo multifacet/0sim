@@ -188,6 +188,8 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
 {
     struct trace_buffer * tb;
     int cpu;
+    unsigned long uncopied;
+    struct trace *user_buf_offset = (struct trace *) user_buf;
 
     unsigned long flags = grab_all_locks();
 
@@ -207,7 +209,13 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
     // Read to user buff. This may block.
     for_each_possible_cpu(cpu) {
         tb = &per_cpu(zerosim_trace_buffers, cpu);
-        copy_to_user(user_buf, tb->buf, TRACE_BUF_SIZE * sizeof(struct trace));
+        uncopied = copy_to_user(user_buf_offset, tb->buf, TRACE_BUF_SIZE * sizeof(struct trace));
+
+        user_buf_offset += TRACE_BUF_SIZE;
+
+        if (uncopied > 0) {
+            printk(KERN_WARN "unable to copy %lu bytes\n", uncopied);
+        }
     }
 
     // Zero all trace buffers
@@ -234,12 +242,12 @@ static inline void zerosim_trace_event(struct trace *ev)
 
     // check if tracing is enabled and ready
     if (!atomic_read(&tracing_enabled) || !atomic_read(ready)) {
-        spin_unlock_irqrestore(&buf->buffer_lock);
+        spin_unlock_irqrestore(&buf->buffer_lock, flags);
         return;
     }
 
     // push to buf
-    buf->buf[buf->next] = *trace;
+    buf->buf[buf->next] = *ev;
     buf->next = (buf->next + 1) % buf->len;
 
     spin_unlock_irqrestore(&buf->buffer_lock, flags);
@@ -256,7 +264,7 @@ void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *cur
     zerosim_trace_event(&tr);
 }
 
-asmlinkage void zerosim_trace_syscall_start(struct pt_regs *reg)
+asmlinkage void zerosim_trace_syscall_start(struct pt_regs *regs)
 {
     struct trace tr = {
         .timestamp = rdtsc(),

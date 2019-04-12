@@ -9,7 +9,7 @@
 /*
  * Trace from task switch. We are given the previous and current (new) tasks.
  */
-void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *next);
+void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *current);
 
 /*
  * Trace from syscall handler start. %rax contains the syscall nr.
