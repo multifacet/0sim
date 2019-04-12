@@ -98,8 +98,6 @@ static __init int zerosim_trace_init(void)
 
         tb = &per_cpu(zerosim_trace_buffers, cpu);
 
-        spin_lock_init(&tb->buffer_lock);
-
         tb->buf = kmalloc_node(TRACE_BUF_SIZE * sizeof(struct trace),
                                GFP_KERNEL | __GFP_ZERO,
                                node);
@@ -119,25 +117,37 @@ static __init int zerosim_trace_init(void)
 }
 subsys_initcall(zerosim_trace_init);
 
-static void grab_all_locks(void)
+static long grab_all_locks(void)
 {
     struct trace_buffer * tb;
     int cpu;
+    unsigned long flags;
 
     for_each_possible_cpu(cpu) {
         tb = &per_cpu(zerosim_trace_buffers, cpu);
-        spin_lock_irqsave(&tb->buffer_lock);
+        if (cpu == 0) {
+            // We save flags for the first lock
+            spin_lock_irqsave(&tb->buffer_lock, flags);
+        } else {
+            spin_lock(&tb->buffer_lock);
+        }
     }
 }
 
-static void release_all_locks(void)
+static void release_all_locks(unsigned long flags)
 {
     struct trace_buffer * tb;
+    unsigned long ncpus = num_possible_cpus();
     int cpu;
 
+    // release in reverse order
     for_each_possible_cpu(cpu) {
-        tb = &per_cpu(zerosim_trace_buffers, cpu);
-        spin_unlock_irqrestore(&tb->buffer_lock);
+        tb = &per_cpu(zerosim_trace_buffers, ncpus - cpu - 1);
+        if ((ncpus - cpu - 1) == 0) {
+            spin_unlock_irqrestore(&tb->buffer_lock, flags);
+        } else {
+            spin_unlock(&tb->buffer_lock);
+        }
     }
 }
 
@@ -146,18 +156,18 @@ static void release_all_locks(void)
  */
 SYSCALL_DEFINE0(zerosim_trace_begin)
 {
-    grab_all_locks();
+    unsigned long flags = grab_all_locks();
 
     if (!READ_ONCE(&ready)) {
-        release_all_locks();
+        release_all_locks(flags);
         return -ENOMEM;
     }
 
     if (atomic_add_unless(&tracing_enabled, 1, 1)) {
-        release_all_locks();
+        release_all_locks(flags);
         return 0; // OK
     } else {
-        release_all_locks();
+        release_all_locks(flags);
         return -EINPROGRESS; // Already tracing.
     }
 }
@@ -176,18 +186,18 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
     struct trace_buffer * tb;
     int cpu;
 
-    grab_all_locks();
+    unsigned long flags = grab_all_locks();
 
     if (!atomic_add_unless(&tracing_enabled, 0, -1)) {
-        release_all_locks();
+        release_all_locks(flags);
         return -EBADE; // didn't call begin
     }
     if (!atomic_add_unless(&ready, 0, -1)) {
-        release_all_locks();
+        release_all_locks(flags);
         return -EBADE; // wasn't ready
     }
 
-    release_all_locks();
+    release_all_locks(flags);
 
     // We have to release the locks because `copy_to_user` can block.
 
@@ -203,9 +213,9 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
         memset(tb->buf, 0, TRACE_BUF_SIZE * sizeof(struct trace));
     }
 
-    grab_all_locks();
+    flags = grab_all_locks();
     atomic_set(&ready, 1);
-    release_all_locks();
+    release_all_locks(flags);
 }
 
 /* Actually add the given event into the trace buffer, potentially overwriting
@@ -216,7 +226,8 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
 static inline zerosim_trace_event(struct trace *ev)
 {
     struct trace_buffer *buf = this_cpu_ptr(zerosim_trace_buffers);
-    spin_lock_irqsave(&buf->buffer_lock);
+    unsigned long flags;
+    spin_lock_irqsave(&buf->buffer_lock, flags);
 
     // check if tracing is enabled and ready
     if (!READ_ONCE(&tracing_enabled) || !READ_ONCE(&ready)) {
@@ -228,7 +239,7 @@ static inline zerosim_trace_event(struct trace *ev)
     buf->buf[buf->next] = *trace;
     buf->next = (buf->next + 1) % buf->len;
 
-    spin_unlock_irqrestore(&buf->buffer_lock);
+    spin_unlock_irqrestore(&buf->buffer_lock, flags);
 }
 
 void zerosim_trace_task_switch(struct task_struct *prev, struct task_struct *current)
