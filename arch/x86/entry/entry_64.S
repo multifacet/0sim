@@ -183,34 +183,29 @@ entry_SYSCALL_64_fastpath:
 	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
     movq %r10, %rcx
 
-    // TODO(markm)
-    // /* pass &pt_regs == %rsp */
-    // movq    %rsp, %rdi
-    // call    zerosim_trace_syscall_start
+    /* pass &pt_regs == %rsp */
+    movq    %rsp, %rdi
+    call    zerosim_trace_syscall_start
 
-    // TODO(markm)
-    // /* restore caller-saved registers for the actual syscall */
-    // movq    ORIG_RAX(%rsp), %rax
-    // movq    RDX(%rsp), %rdx
-    // movq    RDI(%rsp), %rdi
-    // movq    RSI(%rsp), %rsi
-    // movq    R8(%rsp), %r8
-    // movq    R9(%rsp), %r9
-    // movq    R10(%rsp), %rcx
+    /* restore caller-saved registers for the actual syscall */
+    movq    ORIG_RAX(%rsp), %rax
+    movq    RDX(%rsp), %rdx
+    movq    RDI(%rsp), %rdi
+    movq    RSI(%rsp), %rsi
+    movq    R8(%rsp), %r8
+    movq    R9(%rsp), %r9
+    movq    R10(%rsp), %rcx
 
 	call	*sys_call_table(, %rax, 8)
 
-    // TODO(markm)
-    // pushq   %rax    /* save return value */
+    pushq   %rax    /* save return value */
 
-    // TODO(markm)
-    // /* pass retval, &pt_regs */
-    // movq    %rax, %rdi
-    // leaq    8(%rsp), %rsi
-    // call    zerosim_trace_syscall_end
+    /* pass retval, &pt_regs */
+    movq    %rax, %rdi
+    leaq    8(%rsp), %rsi
+    call    zerosim_trace_syscall_end
 
-    // TODO(markm)
-    // popq   %rax    /* retore return value */
+    popq   %rax    /* retore return value */
 
 	movq	%rax, RAX(%rsp)
 1:
