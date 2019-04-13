@@ -805,19 +805,17 @@ ENTRY(\sym)
 	subq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
 	.endif
 
-    // TODO(markm)
-    // pushq %rsi
-    // pushq %rdi
-    // call zerosim_trace_exception_start  /* rbx is callee-saved */
-    // movq (%rsp), %rdi       /* restore args for handler */
-    // movq *(%rsp), %rsi
+    pushq %rsi
+    pushq %rdi
+    call zerosim_trace_exception_start  /* rbx is callee-saved */
+    movq (%rsp), %rdi       /* restore args for handler */
+    movq 8(%rsp), %rsi
 
 	call	\do_sym
 
-    // TODO(markm)
-    // popq %rdi
-    // popq %rsi
-    // call zerosim_trace_exception_end  /* rbx is callee-saved */
+    popq %rdi
+    popq %rsi
+    call zerosim_trace_exception_end  /* rbx is callee-saved */
 
 	.if \shift_ist != -1
 	addq	$EXCEPTION_STKSZ, CPU_TSS_IST(\shift_ist)
@@ -853,19 +851,17 @@ ENTRY(\sym)
 	xorl	%esi, %esi			/* no error code */
 	.endif
 
-    // TODO(markm)
-    // pushq %rsi
-    // pushq %rdi
-    // call zerosim_trace_exception_start  /* rbx is callee-saved */
-    // movq (%rsp), %rdi       /* restore args for handler */
-    // movq *(%rsp), %rsi
+    pushq %rsi
+    pushq %rdi
+    call zerosim_trace_exception_start  /* rbx is callee-saved */
+    movq (%rsp), %rdi       /* restore args for handler */
+    movq 8(%rsp), %rsi
 
 	call	\do_sym
 
-    // TODO(markm)
-    // popq %rdi
-    // popq %rsi
-    // call zerosim_trace_exception_end  /* rbx is callee-saved */
+    popq %rdi
+    popq %rsi
+    call zerosim_trace_exception_end  /* rbx is callee-saved */
 
 	jmp	error_exit			/* %ebx: no swapgs flag */
 	.endif
