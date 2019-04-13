@@ -27,9 +27,6 @@
 // Set if this event is a start. Not set if end or N/A.
 #define ZEROSIM_TRACE_START         (0x00000010)
 
-// Number of events to buffer.
-#define TRACE_BUF_SIZE (1000000)
-
 /* A single event, packed to take 2 words */
 struct trace {
     // The timestamp of the event
@@ -82,33 +79,30 @@ static atomic_t tracing_enabled = ATOMIC_INIT(0);
  */
 static atomic_t ready = ATOMIC_INIT(0);
 
+/*
+ * Used for signaling that the buffer is being copied currently.
+ *
+ * You must hold all buffer locks to change this.
+ */
+static atomic_t hold_buffers = ATOMIC_INIT(0);
+
+static u64 trace_buf_size = 1 << 12;
+
 /* Each CPU has a buffer */
 DEFINE_PER_CPU_SHARED_ALIGNED(struct trace_buffer, zerosim_trace_buffers);
 
 __init int zerosim_trace_init(void)
 {
     struct trace_buffer * tb;
-    int cpu, node;
+    int cpu;
 
     for_each_possible_cpu(cpu) {
-        node = cpu_to_node(cpu);
-
         tb = &per_cpu(zerosim_trace_buffers, cpu);
-
-        tb->buf = kmalloc_node(TRACE_BUF_SIZE * sizeof(struct trace),
-                               GFP_KERNEL | __GFP_ZERO,
-                               node);
-
-        if (tb->buf == NULL) {
-            printk(KERN_WARNING "Unable to init zerosim_trace. kmalloc failed.\n");
-            return -1; // Does nothing
-        }
-
-        tb->len = TRACE_BUF_SIZE;
+        tb->buf = NULL;
+        tb->len = 0;
         tb->next = 0;
+        spin_lock_init(&tb->buffer_lock);
     }
-
-    atomic_set(&ready, 1);
 
     return 0;
 }
@@ -150,6 +144,64 @@ static void release_all_locks(unsigned long flags)
 }
 
 /*
+ * Set the size of each per-cpu buffer, allocating memory appropriately. If
+ * tracing is currently, it will be turned off and any snapshot discarded.
+ */
+SYSCALL_DEFINE1(zerosim_trace_size,
+                unsigned long, ntrace)
+{
+    struct trace_buffer * tb;
+    int cpu, node;
+
+    // Make sure that nobody is tracing and that we are not copying the buffers.
+    unsigned long flags = grab_all_locks();
+
+    if (atomic_read(&hold_buffers)) {
+        release_all_locks(flags);
+        return -EAGAIN;
+    }
+
+    atomic_set(&tracing_enabled, 0);
+    atomic_set(&ready, 0);
+    release_all_locks(flags);
+
+    // If we get here, we know that nobody is using the buffers or copying them.
+
+    // Allocate new buffers, and free any existing buffers.
+    for_each_possible_cpu(cpu) {
+        node = cpu_to_node(cpu);
+
+        tb = &per_cpu(zerosim_trace_buffers, cpu);
+
+        if (tb->buf) {
+        kfree(tb->buf);
+        }
+
+        tb->buf = kmalloc_node(ntrace * sizeof(struct trace),
+                               GFP_KERNEL | __GFP_ZERO,
+                               node);
+
+        if (tb->buf == NULL) {
+            printk(KERN_WARNING "Unable to alloc for zerosim_trace. kmalloc failed.\n");
+        return -ENOMEM;
+        } else {
+            printk(KERN_WARNING "Allocated zerosim_trace buffer for cpu %d\n", cpu);
+        }
+
+        tb->len = ntrace;
+        tb->next = 0;
+    }
+
+    // Atomically set buffer size and enable
+    flags = grab_all_locks();
+    WRITE_ONCE(trace_buf_size, ntrace);
+    atomic_set(&ready, 1);
+    release_all_locks(flags);
+
+    return 0;
+}
+
+/*
  * Begin tracing on all cores. This should be called once per call to snapshot.
  */
 SYSCALL_DEFINE0(zerosim_trace_begin)
@@ -163,6 +215,7 @@ SYSCALL_DEFINE0(zerosim_trace_begin)
 
     if (atomic_add_unless(&tracing_enabled, 1, 1)) {
         release_all_locks(flags);
+    printk(KERN_WARNING "zerosim_trace begin\n");
         return 0; // OK
     } else {
         release_all_locks(flags);
@@ -175,7 +228,7 @@ SYSCALL_DEFINE0(zerosim_trace_begin)
  * userspace buffer. This should only be called once per call to begin, and
  * must be called after begin is called.
  *
- * len must be at least TRACE_BUF_SIZE * num_cpus() bytes.
+ * len must be at least trace_buf_size * num_cpus() bytes.
  */
 SYSCALL_DEFINE2(zerosim_trace_snapshot,
                 void*,          user_buf,
@@ -197,31 +250,39 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
         return -EBADE; // wasn't ready
     }
 
+    // Signal that we shouldn't re-allocate buffers now
+    atomic_set(&hold_buffers, 1);
+
     release_all_locks(flags);
+
+    // If we get here, it means that nobody is using or freeing buffers.
 
     // We have to release the locks because `copy_to_user` can block.
 
     // Read to user buff. This may block.
     for_each_possible_cpu(cpu) {
         tb = &per_cpu(zerosim_trace_buffers, cpu);
-        uncopied = copy_to_user(user_buf_offset, tb->buf, TRACE_BUF_SIZE * sizeof(struct trace));
+        uncopied = copy_to_user(user_buf_offset, tb->buf, trace_buf_size * sizeof(struct trace));
 
-        user_buf_offset += TRACE_BUF_SIZE;
+        user_buf_offset += trace_buf_size;
 
         if (uncopied > 0) {
-            printk(KERN_WARNING "unable to copy %lu bytes\n", uncopied);
+            printk(KERN_WARNING "unable to copy %lu bytes from cpu %d\n", uncopied, cpu);
         }
     }
 
     // Zero all trace buffers
     for_each_possible_cpu(cpu) {
         tb = &per_cpu(zerosim_trace_buffers, cpu);
-        memset(tb->buf, 0, TRACE_BUF_SIZE * sizeof(struct trace));
+        memset(tb->buf, 0, trace_buf_size * sizeof(struct trace));
     }
 
     flags = grab_all_locks();
+    atomic_set(&hold_buffers, 0);
     atomic_set(&ready, 1);
     release_all_locks(flags);
+
+    printk(KERN_WARNING "zerosim_trace snapshot\n");
 
     return 0;
 }
@@ -233,8 +294,16 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
  */
 static inline void zerosim_trace_event(struct trace *ev)
 {
-    struct trace_buffer *buf = &per_cpu(zerosim_trace_buffers, my_cpu_offset);
+    struct trace_buffer *buf;
     unsigned long flags;
+
+    // Guard against reads of uninitialized per_cpu
+    if (!atomic_read(&ready)) {
+        return;
+    }
+
+    buf = &per_cpu(zerosim_trace_buffers, my_cpu_offset);
+
     spin_lock_irqsave(&buf->buffer_lock, flags);
 
     // check if tracing is enabled and ready

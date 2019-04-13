@@ -375,3 +375,4 @@
 # 0sim
 546 64 zerosim_trace_begin sys_zerosim_trace_begin
 547 64 zerosim_trace_snapshot sys_zerosim_trace_snapshot
+548 64 zerosim_trace_size sys_zerosim_trace_size
