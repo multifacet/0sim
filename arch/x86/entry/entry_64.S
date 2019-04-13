@@ -563,18 +563,16 @@ END(irq_entries_start)
 	/* We entered an interrupt context - irqs are off: */
 	TRACE_IRQS_OFF
 
-    // TODO(markm)
-    // /* rdi = &pt_regs */
-    // call    zerosim_trace_interrupt_start
-    // /* need to restore rdi since it may have been clobbered */
-    // movq    (%rsp), %rdi
+    /* rdi = &pt_regs */
+    call    zerosim_trace_interrupt_start
+    /* need to restore rdi since it may have been clobbered */
+    movq    (%rsp), %rdi
 
 	call	\func	/* rdi points to pt_regs */
 
-    // TODO(markm)
-    // /* need to restore rdi since it may have been clobbered */
-    // movq    (%rsp), %rdi
-    // call    zerosim_trace_interrupt_end
+    /* need to restore rdi since it may have been clobbered */
+    movq    (%rsp), %rdi
+    call    zerosim_trace_interrupt_end
 	.endm
 
 	/*
