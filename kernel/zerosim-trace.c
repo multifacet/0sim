@@ -174,7 +174,7 @@ SYSCALL_DEFINE1(zerosim_trace_size,
         tb = &per_cpu(zerosim_trace_buffers, cpu);
 
         if (tb->buf) {
-        kfree(tb->buf);
+            kfree(tb->buf);
         }
 
         tb->buf = kmalloc_node(ntrace * sizeof(struct trace),
@@ -183,7 +183,7 @@ SYSCALL_DEFINE1(zerosim_trace_size,
 
         if (tb->buf == NULL) {
             printk(KERN_WARNING "Unable to alloc for zerosim_trace. kmalloc failed.\n");
-        return -ENOMEM;
+            return -ENOMEM;
         } else {
             printk(KERN_WARNING "Allocated zerosim_trace buffer for cpu %d\n", cpu);
         }
@@ -215,7 +215,7 @@ SYSCALL_DEFINE0(zerosim_trace_begin)
 
     if (atomic_add_unless(&tracing_enabled, 1, 1)) {
         release_all_locks(flags);
-    printk(KERN_WARNING "zerosim_trace begin\n");
+        printk(KERN_WARNING "zerosim_trace begin\n");
         return 0; // OK
     } else {
         release_all_locks(flags);
@@ -302,7 +302,7 @@ static inline void zerosim_trace_event(struct trace *ev)
         return;
     }
 
-    buf = &per_cpu(zerosim_trace_buffers, my_cpu_offset);
+    buf = &per_cpu(zerosim_trace_buffers, smp_processor_id());
 
     spin_lock_irqsave(&buf->buffer_lock, flags);
 
