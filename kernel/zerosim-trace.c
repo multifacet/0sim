@@ -261,14 +261,26 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
 
     // Read to user buff. This may block.
     for_each_possible_cpu(cpu) {
+        printk(KERN_WARNING "zerosim_trace copying cpu %d traces to buffer at %p\n",
+                cpu, user_buf_offset);
+
         tb = &per_cpu(zerosim_trace_buffers, cpu);
-        uncopied = copy_to_user(user_buf_offset, tb->buf, trace_buf_size * sizeof(struct trace));
 
-        user_buf_offset += trace_buf_size;
-
+        // Copy the first part of the buffer...
+        uncopied = copy_to_user(user_buf_offset, &tb->buf[tb->next],
+                                (tb->len - tb->next) * sizeof(struct trace));
         if (uncopied > 0) {
             printk(KERN_WARNING "unable to copy %lu bytes from cpu %d\n", uncopied, cpu);
         }
+        user_buf_offset += tb->len - tb->next;
+
+        // ... and then wrap around to the beginning.
+        uncopied = copy_to_user(user_buf_offset, tb->buf,
+                                tb->next * sizeof(struct trace));
+        if (uncopied > 0) {
+            printk(KERN_WARNING "unable to copy %lu bytes from cpu %d\n", uncopied, cpu);
+        }
+        user_buf_offset += tb->next;
     }
 
     // Zero all trace buffers
