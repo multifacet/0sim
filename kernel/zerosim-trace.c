@@ -265,9 +265,6 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
 
     // Read to user buff. This may block.
     for_each_possible_cpu(cpu) {
-        printk(KERN_WARNING "zerosim_trace copying cpu %d traces to buffer at %p\n",
-                cpu, user_buf_offset);
-
         tb = &per_cpu(zerosim_trace_buffers, cpu);
 
         // Copy the first part of the buffer...
