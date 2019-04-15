@@ -36,6 +36,10 @@ struct trace {
     u32 id;
     // Flags to indicate what kind of event this is.
     u32 flags;
+    // PID of `current` at time of event.
+    u32 pid;
+    // Any extra useful info (e.g. error codes, prev task pid, etc).
+    u32 extra;
 };
 
 /* A per-cpu buffer for trace events */
@@ -342,6 +346,8 @@ void zerosim_trace_task_switch(struct task_struct *prev,
         .timestamp = rdtsc(),
         .id = (u32) curr->pid,
         .flags = ZEROSIM_TRACE_TASK_SWITCH,
+        .pid = (u32) curr->pid,
+        .extra = (u32) prev->pid,
     };
 
     zerosim_trace_event(&tr);
@@ -353,6 +359,8 @@ asmlinkage void zerosim_trace_syscall_start(struct pt_regs *regs)
         .timestamp = rdtsc(),
         .id = (u32) regs->orig_ax, // syscall nr
         .flags = ZEROSIM_TRACE_SYSCALL | ZEROSIM_TRACE_START,
+        .pid = (u32) current->pid,
+        .extra = 0,
     };
 
     zerosim_trace_event(&tr);
@@ -364,6 +372,8 @@ asmlinkage void zerosim_trace_syscall_end(u64 syscall_retval, struct pt_regs *re
         .timestamp = rdtsc(),
         .id = (u32) regs->orig_ax, // syscall nr
         .flags = ZEROSIM_TRACE_SYSCALL,
+        .pid = (u32) current->pid,
+        .extra = (u32) syscall_retval & 0xFFFFFFFFul, // truncated return value
     };
 
     zerosim_trace_event(&tr);
@@ -375,6 +385,8 @@ void zerosim_trace_interrupt_start(struct pt_regs *regs)
         .timestamp = rdtsc(),
         .id = (u32) regs->orig_ax, // interrupt nr
         .flags = ZEROSIM_TRACE_INTERRUPT | ZEROSIM_TRACE_START,
+        .pid = (u32) current->pid,
+        .extra = 0,
     };
 
     zerosim_trace_event(&tr);
@@ -386,6 +398,8 @@ void zerosim_trace_interrupt_end(struct pt_regs *regs)
         .timestamp = rdtsc(),
         .id = (u32) regs->orig_ax, // interrupt nr
         .flags = ZEROSIM_TRACE_INTERRUPT,
+        .pid = (u32) current->pid,
+        .extra = 0,
     };
 
     zerosim_trace_event(&tr);
@@ -397,6 +411,8 @@ dotraplinkage void zerosim_trace_exception_start(struct pt_regs *regs, long erro
         .timestamp = rdtsc(),
         .id = (u32) error_code,
         .flags = ZEROSIM_TRACE_FAULT | ZEROSIM_TRACE_START,
+        .pid = (u32) current->pid,
+        .extra = 0,
     };
 
     zerosim_trace_event(&tr);
@@ -408,6 +424,8 @@ dotraplinkage void zerosim_trace_exception_end(struct pt_regs *regs, long error_
         .timestamp = rdtsc(),
         .id = (u32) error_code,
         .flags = ZEROSIM_TRACE_FAULT,
+        .pid = (u32) current->pid,
+        .extra = 0,
     };
 
     zerosim_trace_event(&tr);
