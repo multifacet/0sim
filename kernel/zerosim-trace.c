@@ -373,7 +373,7 @@ asmlinkage void zerosim_trace_syscall_end(u64 syscall_retval, struct pt_regs *re
         .id = (u32) regs->orig_ax, // syscall nr
         .flags = ZEROSIM_TRACE_SYSCALL,
         .pid = (u32) current->pid,
-        .extra = (u32) syscall_retval & 0xFFFFFFFFul, // truncated return value
+        .extra = (u32) (syscall_retval & 0xFFFFFFFFul), // truncated return value
     };
 
     zerosim_trace_event(&tr);
@@ -425,7 +425,7 @@ dotraplinkage void zerosim_trace_exception_end(struct pt_regs *regs, long error_
         .id = (u32) error_code,
         .flags = ZEROSIM_TRACE_FAULT,
         .pid = (u32) current->pid,
-        .extra = 0,
+        .extra = (u32) (pt_regs->ip & 0xFFFFFFFFul),
     };
 
     zerosim_trace_event(&tr);
