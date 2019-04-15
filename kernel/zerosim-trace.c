@@ -123,6 +123,8 @@ static long grab_all_locks(void)
         }
     }
 
+    smp_mb();
+
     return flags;
 }
 
@@ -131,6 +133,8 @@ static void release_all_locks(unsigned long flags)
     struct trace_buffer * tb;
     unsigned long ncpus = num_possible_cpus();
     int cpu;
+
+    smp_mb();
 
     // release in reverse order
     for_each_possible_cpu(cpu) {
@@ -287,6 +291,7 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
     for_each_possible_cpu(cpu) {
         tb = &per_cpu(zerosim_trace_buffers, cpu);
         memset(tb->buf, 0, trace_buf_size * sizeof(struct trace));
+        tb->next = 0;
     }
 
     flags = grab_all_locks();
