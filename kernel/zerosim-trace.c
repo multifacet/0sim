@@ -425,7 +425,7 @@ dotraplinkage void zerosim_trace_exception_end(struct pt_regs *regs, long error_
         .id = (u32) error_code,
         .flags = ZEROSIM_TRACE_FAULT,
         .pid = (u32) current->pid,
-        .extra = (u32) (pt_regs->ip & 0xFFFFFFFFul),
+        .extra = (u32) (regs->ip & 0xFFFFFFFFul),
     };
 
     zerosim_trace_event(&tr);
