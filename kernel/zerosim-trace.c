@@ -245,11 +245,11 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
 
     unsigned long flags = grab_all_locks();
 
-    if (!atomic_add_unless(&tracing_enabled, 0, -1)) {
+    if (!atomic_add_unless(&tracing_enabled, -1, 0)) {
         release_all_locks(flags);
         return -EBADE; // didn't call begin
     }
-    if (!atomic_add_unless(&ready, 0, -1)) {
+    if (!atomic_add_unless(&ready, -1, 0)) {
         release_all_locks(flags);
         return -EBADE; // wasn't ready
     }
