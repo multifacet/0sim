@@ -323,6 +323,8 @@ static inline void zerosim_trace_event(struct trace *ev)
 
     spin_lock_irqsave(&buf->buffer_lock, flags);
 
+    smp_mb();
+
     // check if tracing is enabled and ready
     if (!atomic_read(&tracing_enabled) || !atomic_read(&ready)) {
         spin_unlock_irqrestore(&buf->buffer_lock, flags);
