@@ -384,7 +384,7 @@ void zerosim_trace_interrupt_start(struct pt_regs *regs)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = (u32) regs->orig_ax, // interrupt nr
+        .id = (u32) ~regs->orig_ax, // interrupt nr
         .flags = ZEROSIM_TRACE_INTERRUPT | ZEROSIM_TRACE_START,
         .pid = (u32) current->pid,
         .extra = 0,
@@ -397,7 +397,7 @@ void zerosim_trace_interrupt_end(struct pt_regs *regs)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = (u32) regs->orig_ax, // interrupt nr
+        .id = (u32) ~regs->orig_ax, // interrupt nr
         .flags = ZEROSIM_TRACE_INTERRUPT,
         .pid = (u32) current->pid,
         .extra = 0,
