@@ -21,11 +21,12 @@
 // Type of event
 #define ZEROSIM_TRACE_TASK_SWITCH   (0x00000001)
 #define ZEROSIM_TRACE_INTERRUPT     (0x00000002)
-#define ZEROSIM_TRACE_FAULT         (0x00000004)
-#define ZEROSIM_TRACE_SYSCALL       (0x00000008)
+#define ZEROSIM_TRACE_FAULT         (0x00000003)
+#define ZEROSIM_TRACE_SYSCALL       (0x00000004)
+#define ZEROSIM_TRACE_SOFTIRQ       (0x00000005)
 
 // Set if this event is a start. Not set if end or N/A.
-#define ZEROSIM_TRACE_START         (0x00000010)
+#define ZEROSIM_TRACE_START         (0x80000000)
 
 /* A single event, packed to take 2 words */
 struct trace {
@@ -431,3 +432,28 @@ dotraplinkage void zerosim_trace_exception_end(struct pt_regs *regs, long error_
     zerosim_trace_event(&tr);
 }
 
+void zerosim_trace_softirq_start(void)
+{
+    struct trace tr = {
+        .timestamp = rdtsc(),
+        .id = 0,
+        .flags = ZEROSIM_TRACE_SOFTIRQ | ZEROSIM_TRACE_START,
+        .pid = (u32) current->pid,
+        .extra = 0,
+    };
+
+    zerosim_trace_event(&tr);
+}
+
+void zerosim_trace_softirq_end(void)
+{
+    struct trace tr = {
+        .timestamp = rdtsc(),
+        .id = 0,
+        .flags = ZEROSIM_TRACE_SOFTIRQ,
+        .pid = (u32) current->pid,
+        .extra = 0,
+    };
+
+    zerosim_trace_event(&tr);
+}

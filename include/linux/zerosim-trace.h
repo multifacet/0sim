@@ -48,4 +48,14 @@ dotraplinkage void zerosim_trace_exception_start(struct pt_regs *regs, long erro
  */
 dotraplinkage void zerosim_trace_exception_end(struct pt_regs *regs, long error_code);
 
+/*
+ * Start trace from softirq processing.
+ */
+void zerosim_trace_softirq_start(void);
+
+/*
+ * End trace from softirq processing.
+ */
+void zerosim_trace_softirq_end(void);
+
 #endif
