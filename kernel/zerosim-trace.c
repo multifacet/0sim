@@ -256,7 +256,7 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
     }
     if (!atomic_add_unless(&ready, -1, 0)) {
         release_all_locks(flags);
-        return -EBADE; // wasn't ready
+        return -ENOMEM; // wasn't ready
     }
 
     // Check that the user buffer is large enough
