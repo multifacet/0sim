@@ -237,7 +237,7 @@ SYSCALL_DEFINE0(zerosim_trace_begin)
  * userspace buffer. This should only be called once per call to begin, and
  * must be called after begin is called.
  *
- * len must be at least trace_buf_size * num_cpus() bytes.
+ * len must be at least trace_buf_size * num_cpus() * sizeof(trace) bytes.
  */
 SYSCALL_DEFINE2(zerosim_trace_snapshot,
                 void*,          user_buf,
@@ -257,6 +257,12 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
     if (!atomic_add_unless(&ready, -1, 0)) {
         release_all_locks(flags);
         return -EBADE; // wasn't ready
+    }
+
+    // Check that the user buffer is large enough
+    if (len < (trace_buf_size * num_possible_cpus() * sizeof(struct trace))) {
+        release_all_locks(flags);
+        return -EINVAL;
     }
 
     // Signal that we shouldn't re-allocate buffers now
