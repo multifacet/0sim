@@ -12,6 +12,7 @@
 #include <linux/compiler.h>
 #include <linux/slab.h>
 #include <linux/percpu.h>
+#include <linux/module.h>
 
 #include <asm/ptrace.h>
 #include <asm/topology.h>
@@ -480,6 +481,7 @@ void zerosim_trace_vm_enter(int vcpu_id)
 
     zerosim_trace_event(&tr);
 }
+EXPORT_SYMBOL(zerosim_trace_vm_enter);
 
 void zerosim_trace_vm_exit(unsigned long reason, unsigned long qual)
 {
@@ -493,3 +495,4 @@ void zerosim_trace_vm_exit(unsigned long reason, unsigned long qual)
 
     zerosim_trace_event(&tr);
 }
+EXPORT_SYMBOL(zerosim_trace_vm_exit);
