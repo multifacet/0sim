@@ -264,8 +264,8 @@ SYSCALL_DEFINE2(zerosim_trace_snapshot,
     // Check that the user buffer is large enough
     if (len < (trace_buf_size * num_possible_cpus() * sizeof(struct trace))) {
         release_all_locks(flags);
-        printk(KERN_WARNING "user buffer of size %lu is too small. need %lu * %lu * %lu = %lu.\n",
-                len, trace_buf_size, num_possible_cpus(), sizeof(struct trace),
+        printk(KERN_WARNING "user buffer of size %lu is too small. need %lu * %u * %lu = %llu.\n",
+                len, (unsigned long)trace_buf_size, num_possible_cpus(), sizeof(struct trace),
                 trace_buf_size * num_possible_cpus() * sizeof(struct trace));
         return -EINVAL;
     }
