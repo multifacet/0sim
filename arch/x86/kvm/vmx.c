@@ -8626,7 +8626,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)
 		vmx_set_interrupt_shadow(vcpu, 0);
 
-    zerosim_trace_vm_enter(kvm_vcpu->vcpu_id);
+    zerosim_trace_vm_enter(vcpu->vcpu_id);
 
     end1 = rdtsc();
 
