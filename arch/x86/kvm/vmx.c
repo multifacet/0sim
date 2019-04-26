@@ -32,6 +32,7 @@
 #include <linux/slab.h>
 #include <linux/tboot.h>
 #include <linux/hrtimer.h>
+#include <linux/zerosim-trace.h>
 #include "kvm_cache_regs.h"
 #include "x86.h"
 
@@ -8625,6 +8626,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)
 		vmx_set_interrupt_shadow(vcpu, 0);
 
+    zerosim_trace_vm_enter(kvm_vcpu->vcpu_id);
+
     end1 = rdtsc();
 
 	atomic_switch_perf_msrs(vmx);
@@ -8767,6 +8770,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx->loaded_vmcs->launched = 1;
 
 	vmx->exit_reason = vmcs_read32(VM_EXIT_REASON);
+
+    zerosim_trace_vm_exit(vmx->exit_reason, vmcs_readl(EXIT_QUALIFICATION));
 
 	/*
 	 * the KVM_REQ_EVENT optimization bit is only on for one entry, and if

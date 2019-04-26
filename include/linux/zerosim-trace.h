@@ -58,4 +58,14 @@ void zerosim_trace_softirq_start(void);
  */
 void zerosim_trace_softirq_end(void);
 
+/*
+ * Trace from VM enter.
+ */
+void zerosim_trace_vm_enter(int vcpu_id);
+
+/*
+ * Trace from VM exit.
+ */
+void zerosim_trace_vm_exit(unsigned long reason, unsigned long qual);
+
 #endif

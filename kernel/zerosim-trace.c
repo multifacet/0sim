@@ -24,6 +24,7 @@
 #define ZEROSIM_TRACE_FAULT         (0x00000003)
 #define ZEROSIM_TRACE_SYSCALL       (0x00000004)
 #define ZEROSIM_TRACE_SOFTIRQ       (0x00000005)
+#define ZEROSIM_TRACE_VMENTEREXIT   (0x00000006)
 
 // Set if this event is a start. Not set if end or N/A.
 #define ZEROSIM_TRACE_START         (0x80000000)
@@ -462,6 +463,32 @@ void zerosim_trace_softirq_end(void)
         .flags = ZEROSIM_TRACE_SOFTIRQ,
         .pid = (u32) current->pid,
         .extra = 0,
+    };
+
+    zerosim_trace_event(&tr);
+}
+
+void zerosim_trace_vm_enter(int vcpu_id)
+{
+    struct trace tr = {
+        .timestamp = rdtsc(),
+        .id = 0,
+        .flags = ZEROSIM_TRACE_VMENTEREXIT | ZEROSIM_TRACE_START,
+        .pid = (u32) current->pid,
+        .extra = (u32) vcpu_id,
+    };
+
+    zerosim_trace_event(&tr);
+}
+
+void zerosim_trace_vm_exit(unsigned long reason, unsigned long qual)
+{
+    struct trace tr = {
+        .timestamp = rdtsc(),
+        .id = (u32) (reason & 0xFFFF), // All other bits are 0
+        .flags = ZEROSIM_TRACE_VMENTEREXIT,
+        .pid = (u32) current->pid,
+        .extra = (qual & xFFFFFFFFul), // All other bits are 0 for most exits
     };
 
     zerosim_trace_event(&tr);
