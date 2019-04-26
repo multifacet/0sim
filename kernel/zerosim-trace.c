@@ -488,7 +488,7 @@ void zerosim_trace_vm_exit(unsigned long reason, unsigned long qual)
         .id = (u32) (reason & 0xFFFF), // All other bits are 0
         .flags = ZEROSIM_TRACE_VMENTEREXIT,
         .pid = (u32) current->pid,
-        .extra = (qual & xFFFFFFFFul), // All other bits are 0 for most exits
+        .extra = (qual & 0xFFFFFFFFul), // All other bits are 0 for most exits
     };
 
     zerosim_trace_event(&tr);
