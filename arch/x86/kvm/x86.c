@@ -6666,6 +6666,8 @@ cancel_injection:
 	if (unlikely(vcpu->arch.apic_attention))
 		kvm_lapic_sync_from_vapic(vcpu);
 out:
+    end = rdtsc();
+    kvm_vcpu_miss_more_cycles(vcpu, end - start);
 	return r;
 }
 
