@@ -8772,12 +8772,12 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx->exit_reason = vmcs_read32(VM_EXIT_REASON);
 
     switch (vmx->exit_reason) {
-        case 0x1: /* external interrupt */
+        case EXIT_REASON_EXTERNAL_INTERRUPT:
             zerosim_trace_vm_exit(vmx->exit_reason,
                     (unsigned long) vmcs_read32(VM_EXIT_INTR_INFO) & INTR_INFO_VECTOR_MASK);
             break;
 
-        case 0x1C: /* WRMSR */
+        case EXIT_REASON_MSR_WRITE:
             zerosim_trace_vm_exit(vmx->exit_reason,
                     (unsigned long) vcpu->arch.regs[VCPU_REGS_RCX]);
             break;
