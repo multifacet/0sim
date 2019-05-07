@@ -8771,7 +8771,21 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
 	vmx->exit_reason = vmcs_read32(VM_EXIT_REASON);
 
-    zerosim_trace_vm_exit(vmx->exit_reason, vmcs_readl(EXIT_QUALIFICATION));
+    switch (vmx->exit_reason) {
+        case 0x1: /* external interrupt */
+            zerosim_trace_vm_exit(vmx->exit_reason,
+                    (unsigned long) vmcs_read32(VM_EXIT_INTR_INFO) & INTR_INFO_VECTOR_MASK);
+            break;
+
+        case 0x1C: /* WRMSR */
+            zerosim_trace_vm_exit(vmx->exit_reason,
+                    (unsigned long) vcpu->arch.regs[VCPU_REGS_RCX]);
+            break;
+
+        default:
+            zerosim_trace_vm_exit(vmx->exit_reason, vmcs_readl(EXIT_QUALIFICATION));
+            break;
+    }
 
 	/*
 	 * the KVM_REQ_EVENT optimization bit is only on for one entry, and if
