@@ -69,23 +69,66 @@
 #include <linux/psi.h>
 #include <linux/syscalls.h>
 #include <linux/ktask.h>
+#include <linux/proc_fs.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
 #include "internal.h"
 
+////////////////////////////////////////////////////////////////////////////////
+// Instrumentation
+////////////////////////////////////////////////////////////////////////////////
+
+static struct proc_dir_entry *ktask_instrumentation_ent;
+
 static atomic64_t num_deferred_init_chunks = ATOMIC64_INIT(0);
 
-/*
- * Syscall to get the number of deferred initialize ktask chunks.
- *
- * Call this after initialization is done.
- */
-SYSCALL_DEFINE0(get_struct_page_init_ktask_chunks)
+#define KTASK_BUFSIZE 256
+
+static ssize_t ktask_instrumentation_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
 {
-    return atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK;
+    // Generate the output to this buffer then copy to user
+	char buf[KTASK_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0 || count < KTASK_BUFSIZE)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%lu\n",
+        atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK
+    );
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
 }
+
+static struct file_operations ktask_instrumentation_ops =
+{
+	.read = ktask_instrumentation_read,
+};
+
+static int ktask_instrumentation_init(void)
+{
+	ktask_instrumentation_ent =
+        proc_create("ktask_instrumentation", 0444, NULL, &ktask_instrumentation_ops);
+	return 0;
+}
+
+static void ktask_instrumentation_cleanup(void)
+{
+	proc_remove(ktask_instrumentation_ent);
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
@@ -1932,6 +1975,8 @@ void __init page_alloc_init_late(void)
 
 	for_each_populated_zone(zone)
 		set_zone_contiguous(zone);
+
+    ktask_instrumentation_init();
 }
 
 #ifdef CONFIG_CMA
