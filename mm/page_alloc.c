@@ -84,6 +84,9 @@ static struct proc_dir_entry *ktask_instrumentation_ent;
 
 static atomic64_t num_deferred_init_chunks = ATOMIC64_INIT(0);
 
+static unsigned long long ktask_mem_init_time = 0;
+static unsigned long long ktask_mem_free_time = 0;
+
 #define KTASK_BUFSIZE 256
 
 static ssize_t ktask_instrumentation_read(
@@ -98,8 +101,10 @@ static ssize_t ktask_instrumentation_read(
 		return 0;
 
     // Actually output data
-	len += sprintf(buf, "%lu\n",
-        atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK
+	len += sprintf(buf, "%lu %lu %lu\n",
+        atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK,
+        ktask_mem_init_time,
+        ktask_mem_free_time,
     );
 
     // copy output to user
@@ -1748,6 +1753,7 @@ static int __init deferred_init_memmap(void *data)
 	u64 i;
 	unsigned long nr_node_cpus;
 	struct ktask_node kn;
+    unsigned long long init_start_time, init_finish_time, free_finish_time;
 
 	/* Bind memory initialisation thread to a local node if possible */
 	if (!cpumask_empty(cpumask))
@@ -1782,6 +1788,7 @@ static int __init deferred_init_memmap(void *data)
 	}
 	first_init_pfn = max(zone->zone_start_pfn, first_init_pfn);
 
+    init_start_time = rdtsc();
 	/*
 	 * Initialize and free pages. We do it in two loops: first we initialize
 	 * struct page, than free to buddy allocator, because while we are
@@ -1807,6 +1814,7 @@ static int __init deferred_init_memmap(void *data)
 
 		nr_init += atomic64_read(&args.nr_pages);
 	}
+    init_finish_time = rdtsc();
 	for_each_free_mem_range(i, nid, MEMBLOCK_NONE, &spa, &epa, NULL) {
 		struct deferred_args args = { nid, zid, ATOMIC64_INIT(0) };
 		DEFINE_KTASK_CTL(ctl, deferred_free_chunk, &args,
@@ -1823,7 +1831,11 @@ static int __init deferred_init_memmap(void *data)
 
 		nr_free += atomic64_read(&args.nr_pages);
 	}
+    free_finish_time = rdtsc();
 	pgdat_resize_unlock(pgdat, &flags);
+
+    ktask_mem_init_time = init_finish_time - init_start_time;
+    ktask_mem_free_time = free_finish_time - init_finish_time;
 
 	/* Sanity check that the next zone really is unpopulated */
 	WARN_ON(++zid < MAX_NR_ZONES && populated_zone(++zone));
