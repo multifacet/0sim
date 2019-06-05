@@ -104,7 +104,7 @@ static ssize_t ktask_instrumentation_read(
 	len += sprintf(buf, "%lu %lu %lu\n",
         atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK,
         ktask_mem_init_time,
-        ktask_mem_free_time,
+        ktask_mem_free_time
     );
 
     // copy output to user
@@ -126,11 +126,6 @@ static int ktask_instrumentation_init(void)
 	ktask_instrumentation_ent =
         proc_create("ktask_instrumentation", 0444, NULL, &ktask_instrumentation_ops);
 	return 0;
-}
-
-static void ktask_instrumentation_cleanup(void)
-{
-	proc_remove(ktask_instrumentation_ent);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
