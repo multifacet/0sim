@@ -24,7 +24,14 @@
 #include <linux/page_owner.h>
 #include <linux/psi.h>
 #include <linux/syscalls.h>
+#include <linux/proc_fs.h>
 #include "internal.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Instrumentation
+////////////////////////////////////////////////////////////////////////////////
+
+static struct proc_dir_entry *compact_instrumentation_ent;
 
 // The number of operations that are repeated for pages (e.g. isolation,
 // migration, freeing, etc.). This counter includes ops that undo other ops.
@@ -45,20 +52,47 @@ void inc_num_per_page_undone_ops(unsigned long n)
     num_per_page_undone_ops += n;
 }
 
-// Define a syscall to retrieve the values of the counters
-SYSCALL_DEFINE1(get_compaction_counters, unsigned long, which)
+#define INSTR_BUFSIZE 256
+
+static ssize_t compact_instrumentation_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
 {
-    switch (which) {
-        case 0:
-            return num_per_page_ops;
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
 
-        case 1:
-            return num_per_page_undone_ops;
+    // The user has to read the whole file in one shot
+	if(*ppos > 0 || count < INSTR_BUFSIZE)
+		return 0;
 
-        default:
-            return 0xDEADBEEF;
-    }
+    // Actually output data
+	len += sprintf(buf, "%lu %lu\n",
+        num_per_page_ops,
+        num_per_page_undone_ops
+    );
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
 }
+
+static struct file_operations compact_instrumentation_ops =
+{
+	.read = compact_instrumentation_read,
+};
+
+static int compact_instrumentation_init(void) // TODO use it
+{
+	compact_instrumentation_ent =
+        proc_create("compact_instrumentation", 0444, NULL, &compact_instrumentation_ops);
+	return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 #ifdef CONFIG_COMPACTION
 static inline void count_compact_event(enum vm_event_item item)
