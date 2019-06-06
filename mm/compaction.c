@@ -85,7 +85,7 @@ static struct file_operations compact_instrumentation_ops =
 	.read = compact_instrumentation_read,
 };
 
-static int compact_instrumentation_init(void) // TODO use it
+static int compact_instrumentation_init(void)
 {
 	compact_instrumentation_ent =
         proc_create("compact_instrumentation", 0444, NULL, &compact_instrumentation_ops);
@@ -2808,6 +2808,9 @@ static int __init kcompactd_init(void)
 
 	for_each_node_state(nid, N_MEMORY)
 		kcompactd_run(nid);
+
+    compact_instrumentation_init();
+
 	return 0;
 }
 subsys_initcall(kcompactd_init)
