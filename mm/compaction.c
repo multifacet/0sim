@@ -9,11 +9,13 @@
  * Copyright IBM Corp. 2007-2010 Mel Gorman <mel@csn.ul.ie>
  */
 #include <linux/cpu.h>
+#include <linux/cpuset.h>
 #include <linux/swap.h>
 #include <linux/migrate.h>
 #include <linux/compaction.h>
 #include <linux/mm_inline.h>
 #include <linux/sched/signal.h>
+#include <linux/sched/mm.h>
 #include <linux/backing-dev.h>
 #include <linux/sysctl.h>
 #include <linux/sysfs.h>
@@ -25,6 +27,9 @@
 #include <linux/psi.h>
 #include <linux/syscalls.h>
 #include <linux/proc_fs.h>
+
+#include <asm/cpufeature.h>
+
 #include "internal.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -32,6 +37,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 static struct proc_dir_entry *compact_instrumentation_ent;
+static struct proc_dir_entry *compact_trigger_ent;
 
 // The number of operations that are repeated for pages (e.g. isolation,
 // migration, freeing, etc.). This counter includes ops that undo other ops.
@@ -41,6 +47,8 @@ static unsigned long num_per_page_ops = 0;
 // The number of operations counted towards `num_per_page_ops` that were later
 // undone. This is a proxy for the amount of wasted work.
 static unsigned long num_per_page_undone_ops = 0;
+
+static bool trigger_in_progress = 0;
 
 void inc_num_per_page_ops(unsigned long n)
 {
@@ -80,15 +88,181 @@ static ssize_t compact_instrumentation_read(
 	return len;
 }
 
+// Copied from page_alloc.c...
+static inline unsigned int
+gfp_to_alloc_flags(gfp_t gfp_mask)
+{
+	unsigned int alloc_flags = ALLOC_WMARK_MIN | ALLOC_CPUSET;
+
+	/* __GFP_HIGH is assumed to be the same as ALLOC_HIGH to save a branch. */
+	BUILD_BUG_ON(__GFP_HIGH != (__force gfp_t) ALLOC_HIGH);
+
+	/*
+	 * The caller may dip into page reserves a bit more if the caller
+	 * cannot run direct reclaim, or if the caller has realtime scheduling
+	 * policy or is asking for __GFP_HIGH memory.  GFP_ATOMIC requests will
+	 * set both ALLOC_HARDER (__GFP_ATOMIC) and ALLOC_HIGH (__GFP_HIGH).
+	 */
+	alloc_flags |= (__force int) (gfp_mask & __GFP_HIGH);
+
+	if (gfp_mask & __GFP_ATOMIC) {
+		/*
+		 * Not worth trying to allocate harder for __GFP_NOMEMALLOC even
+		 * if it can't schedule.
+		 */
+		if (!(gfp_mask & __GFP_NOMEMALLOC))
+			alloc_flags |= ALLOC_HARDER;
+		/*
+		 * Ignore cpuset mems for GFP_ATOMIC rather than fail, see the
+		 * comment for __cpuset_node_allowed().
+		 */
+		alloc_flags &= ~ALLOC_CPUSET;
+	} else if (unlikely(rt_task(current)) && !in_interrupt())
+		alloc_flags |= ALLOC_HARDER;
+
+	if (gfp_mask & __GFP_KSWAPD_RECLAIM)
+		alloc_flags |= ALLOC_KSWAPD;
+
+#ifdef CONFIG_CMA
+	if (gfpflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
+		alloc_flags |= ALLOC_CMA;
+#endif
+	return alloc_flags;
+}
+
+// copied from page_alloc.c
+static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
+		int preferred_nid, nodemask_t *nodemask,
+		struct alloc_context *ac, gfp_t *alloc_mask,
+		unsigned int *alloc_flags)
+{
+	ac->high_zoneidx = gfp_zone(gfp_mask);
+	ac->zonelist = node_zonelist(preferred_nid, gfp_mask);
+	ac->nodemask = nodemask;
+	ac->migratetype = gfpflags_to_migratetype(gfp_mask);
+
+	if (cpusets_enabled()) {
+		*alloc_mask |= __GFP_HARDWALL;
+		if (!ac->nodemask)
+			ac->nodemask = &cpuset_current_mems_allowed;
+		else
+			*alloc_flags |= ALLOC_CPUSET;
+	}
+
+	fs_reclaim_acquire(gfp_mask);
+	fs_reclaim_release(gfp_mask);
+
+	might_sleep_if(gfp_mask & __GFP_DIRECT_RECLAIM);
+
+    /* Not needed. Used for testing.
+	if (should_fail_alloc_page(gfp_mask, order))
+		return false;
+    */
+
+	if (IS_ENABLED(CONFIG_CMA) && ac->migratetype == MIGRATE_MOVABLE)
+		*alloc_flags |= ALLOC_CMA;
+
+	return true;
+}
+
+// copied from page_alloc.c
+static inline void finalise_ac(gfp_t gfp_mask, struct alloc_context *ac)
+{
+	/* Dirty zone balancing only done in the fast path */
+	ac->spread_dirty_pages = (gfp_mask & __GFP_WRITE);
+
+	/*
+	 * The preferred zone is used for statistics but crucially it is
+	 * also used as the starting point for the zonelist iterator. It
+	 * may get reset for allocations that ignore memory policies.
+	 */
+	ac->preferred_zoneref = first_zones_zonelist(ac->zonelist,
+					ac->high_zoneidx, ac->nodemask);
+}
+
+// A write to this file will cause call `try_to_compact_pages` to allocate a
+// page and then free it.
+static ssize_t compact_trigger_write(
+        struct file *file, const char __user *ubuf, size_t len, loff_t *offset)
+{
+    const gfp_t gfp_mask =
+        __GFP_MOVABLE | __GFP_NOMEMALLOC | __GFP_FS | __GFP_RECLAIM |
+        __GFP_RETRY_MAYFAIL;
+    gfp_t alloc_mask = gfp_mask;
+    unsigned int alloc_flags = gfp_to_alloc_flags(gfp_mask);
+    const unsigned int order = 9; // (1 << order) pages = 2 MiB (same as huge page)
+    const enum compact_priority prio = MIN_COMPACT_PRIORITY; // Try hard!
+    enum compact_result results;
+    struct page *captured = NULL;
+    struct alloc_context ac = {};
+
+    // If already working, return.
+    if (trigger_in_progress) {
+        return 0; // EOF
+    }
+
+    trigger_in_progress = 1;
+
+    // Init alloc_context
+    prepare_alloc_pages(gfp_mask, order, numa_node_id(), /* nodemask= */ NULL,
+            &ac, &alloc_mask, &alloc_flags);
+	finalise_ac(gfp_mask, &ac);
+
+    // Start compaction
+    results = try_to_compact_pages(
+            gfp_mask, order, alloc_flags, &ac, prio, &captured);
+
+    // free the page if one was allocated
+    if (results == COMPACT_SUCCESS) {
+        __free_pages(captured, order);
+    }
+
+    // Done!
+    trigger_in_progress = 0;
+    return 0;
+}
+
+// Returns 1 if there is a trigger in progress, and 0 otherwise.
+static ssize_t compact_trigger_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0 || count < INSTR_BUFSIZE)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%d\n", trigger_in_progress);
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
 static struct file_operations compact_instrumentation_ops =
 {
 	.read = compact_instrumentation_read,
+};
+
+static struct file_operations compact_trigger_ops =
+{
+    .write = compact_trigger_write,
+    .read = compact_trigger_read,
 };
 
 static int compact_instrumentation_init(void)
 {
 	compact_instrumentation_ent =
         proc_create("compact_instrumentation", 0444, NULL, &compact_instrumentation_ops);
+	compact_trigger_ent =
+        proc_create("compact_trigger", 0666, NULL, &compact_trigger_ops);
 	return 0;
 }
 
