@@ -196,7 +196,7 @@ static ssize_t compact_trigger_write(
 {
     const gfp_t gfp_mask =
         __GFP_MOVABLE | __GFP_NOMEMALLOC | __GFP_FS | __GFP_RECLAIM |
-        __GFP_RETRY_MAYFAIL;
+        __GFP_RETRY_MAYFAIL | __GFP_IO;
     gfp_t alloc_mask = gfp_mask;
     unsigned int alloc_flags = gfp_to_alloc_flags(gfp_mask);
     const unsigned int order = 9; // (1 << order) pages = 2 MiB (same as huge page)
