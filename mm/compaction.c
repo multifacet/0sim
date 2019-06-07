@@ -221,6 +221,8 @@ static ssize_t compact_trigger_write(
 		return -EINVAL;
     }
 
+    printk(KERN_WARNING "Compaction trigger %d\n", npages);
+
     trigger_in_progress = 1;
 
     // Init captured array
@@ -241,7 +243,10 @@ static ssize_t compact_trigger_write(
 
         // sanity
         if (results != COMPACT_SUCCESS) {
+            printk(KERN_WARNING "Compact fail %d\n", results);
             BUG_ON(captured[captured_idx]); // should be NULL
+        } else {
+            printk(KERN_WARNING "Compact success\n");
         }
     }
 
