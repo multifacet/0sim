@@ -198,7 +198,7 @@ static ssize_t compact_trigger_write(
 
     // If already working, return.
     if (trigger_in_progress) {
-        return 0; // EOF
+        return -EBUSY;
     }
 
     trigger_in_progress = 1;
@@ -219,7 +219,7 @@ static ssize_t compact_trigger_write(
 
     // Done!
     trigger_in_progress = 0;
-    return 0;
+    return len;
 }
 
 // Returns 1 if there is a trigger in progress, and 0 otherwise.
@@ -263,6 +263,9 @@ static int compact_instrumentation_init(void)
         proc_create("compact_instrumentation", 0444, NULL, &compact_instrumentation_ops);
 	compact_trigger_ent =
         proc_create("compact_trigger", 0666, NULL, &compact_trigger_ops);
+
+    printk(KERN_WARNING "inited compact instrumentation\n");
+
 	return 0;
 }
 
