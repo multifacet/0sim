@@ -180,6 +180,11 @@ static inline void finalise_ac(gfp_t gfp_mask, struct alloc_context *ac)
 					ac->high_zoneidx, ac->nodemask);
 }
 
+#define MAX_COMPACT_TRIGGER_PAGES 512
+
+// Put it here so the stack frame of the write handler is not too large.
+static struct page *captured[MAX_COMPACT_TRIGGER_PAGES];
+
 // A write to this file will cause call `try_to_compact_pages` to allocate a
 // page and then free it.
 static ssize_t compact_trigger_write(
@@ -193,28 +198,59 @@ static ssize_t compact_trigger_write(
     const unsigned int order = 9; // (1 << order) pages = 2 MiB (same as huge page)
     const enum compact_priority prio = MIN_COMPACT_PRIORITY; // Try hard!
     enum compact_result results;
-    struct page *captured = NULL;
-    struct alloc_context ac = {};
+    int captured_idx = 0;
+    int i, num, npages;
+    char input[INSTR_BUFSIZE];
 
     // If already working, return.
     if (trigger_in_progress) {
         return -EBUSY;
     }
 
+    // Parse input
+    if(*offset > 0 || len > INSTR_BUFSIZE) {
+		return -EFAULT;
+    }
+
+	if(copy_from_user(input, ubuf, len)) {
+		return -EFAULT;
+    }
+
+	num = sscanf(input, "%d", &npages);
+	if(num != 1 || npages > MAX_COMPACT_TRIGGER_PAGES) {
+		return -EINVAL;
+    }
+
     trigger_in_progress = 1;
 
-    // Init alloc_context
-    prepare_alloc_pages(gfp_mask, order, numa_node_id(), /* nodemask= */ NULL,
-            &ac, &alloc_mask, &alloc_flags);
-	finalise_ac(gfp_mask, &ac);
+    // Init captured array
+    for (i = 0; i < MAX_COMPACT_TRIGGER_PAGES; ++i) {
+        captured[i] = NULL;
+    }
 
-    // Start compaction
-    results = try_to_compact_pages(
-            gfp_mask, order, alloc_flags, &ac, prio, &captured);
+    for (captured_idx = 0; captured_idx < npages; ++captured_idx) {
+        // Init alloc_context
+        struct alloc_context ac = {};
+        prepare_alloc_pages(gfp_mask, order, numa_node_id(), /* nodemask= */ NULL,
+                &ac, &alloc_mask, &alloc_flags);
+        finalise_ac(gfp_mask, &ac);
 
-    // free the page if one was allocated
-    if (results == COMPACT_SUCCESS) {
-        __free_pages(captured, order);
+        // Start compaction
+        results = try_to_compact_pages(
+                gfp_mask, order, alloc_flags, &ac, prio, &captured[captured_idx]);
+
+        // sanity
+        if (results != COMPACT_SUCCESS) {
+            BUG_ON(captured[captured_idx]); // should be NULL
+        }
+    }
+
+    // free the pages we captured
+    for (captured_idx = 0; captured_idx < npages; ++captured_idx) {
+        // free the page if one was allocated
+        if (captured[captured_idx]) {
+            __free_pages(captured[captured_idx], order);
+        }
     }
 
     // Done!
