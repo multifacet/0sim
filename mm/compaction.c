@@ -70,7 +70,7 @@ static ssize_t compact_instrumentation_read(
 	int len=0;
 
     // The user has to read the whole file in one shot
-	if(*ppos > 0 || count < INSTR_BUFSIZE)
+	if(*ppos > 0)
 		return 0;
 
     // Actually output data
@@ -78,6 +78,10 @@ static ssize_t compact_instrumentation_read(
         num_per_page_ops,
         num_per_page_undone_ops
     );
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
 
     // copy output to user
 	if(copy_to_user(ubuf, buf, len))
@@ -272,11 +276,15 @@ static ssize_t compact_trigger_read(
 	int len=0;
 
     // The user has to read the whole file in one shot
-	if(*ppos > 0 || count < INSTR_BUFSIZE)
+	if(*ppos > 0)
 		return 0;
 
     // Actually output data
 	len += sprintf(buf, "%d\n", trigger_in_progress);
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
 
     // copy output to user
 	if(copy_to_user(ubuf, buf, len))
