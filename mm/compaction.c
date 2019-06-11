@@ -38,6 +38,7 @@
 
 static struct proc_dir_entry *compact_instrumentation_ent;
 static struct proc_dir_entry *compact_trigger_ent;
+static struct proc_dir_entry *compact_spurious_fail;
 
 // The number of operations that are repeated for pages (e.g. isolation,
 // migration, freeing, etc.). This counter includes ops that undo other ops.
@@ -48,7 +49,21 @@ static unsigned long num_per_page_ops = 0;
 // undone. This is a proxy for the amount of wasted work.
 static unsigned long num_per_page_undone_ops = 0;
 
+// True if a compaction trigger is currently running.
 static bool trigger_in_progress = 0;
+
+// Different ways to inject compaction failures (or turn them off).
+enum spurious_fail_mode {
+    SPURIOUS_FAIL_OFF = 0,
+    SPURIOUS_FAIL_ISOLATE = 1,
+    SPURIOUS_FAIL_MIGRATE = 2,
+
+    // number of modes
+    SPURIOUS_FAIL_NUM_MODES,
+};
+
+// What type of failures are currently being injected (default: none).
+static enum spurious_fail_mode compact_spurious_fail_mode = SPURIOUS_FAIL_OFF;
 
 void inc_num_per_page_ops(unsigned long n)
 {
@@ -295,6 +310,65 @@ static ssize_t compact_trigger_read(
 	return len;
 }
 
+// A write to this file will turn on or turn off the given types of spurious failures.
+static ssize_t compact_spurious_fail_write(
+        struct file *file, const char __user *ubuf, size_t len, loff_t *offset)
+{
+    int num, mode_raw;
+    char input[INSTR_BUFSIZE];
+
+    // Parse input
+    if(*offset > 0 || len > INSTR_BUFSIZE) {
+		return -EFAULT;
+    }
+
+	if(copy_from_user(input, ubuf, len)) {
+		return -EFAULT;
+    }
+
+	num = sscanf(input, "%d", &mode_raw);
+	if(num != 1 || mode_raw >= SPURIOUS_FAIL_NUM_MODES) {
+		return -EINVAL;
+    }
+
+    // Set mode
+    compact_spurious_fail_mode = (enum spurious_fail_mode)mode_raw;
+
+    printk(KERN_WARNING "Compaction spurious failure mode set to %d\n",
+            compact_spurious_fail_mode);
+
+    return len;
+}
+
+// Returns the type of spurious compaction failures currently enabled.
+static ssize_t compact_spurious_fail_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%d\n", compact_spurious_fail_mode);
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+
 static struct file_operations compact_instrumentation_ops =
 {
 	.read = compact_instrumentation_read,
@@ -306,12 +380,20 @@ static struct file_operations compact_trigger_ops =
     .read = compact_trigger_read,
 };
 
+static struct file_operations compact_spurious_fail_ops =
+{
+    .write = compact_spurious_fail_write,
+    .read = compact_spurious_fail_read,
+};
+
 static int compact_instrumentation_init(void)
 {
 	compact_instrumentation_ent =
         proc_create("compact_instrumentation", 0444, NULL, &compact_instrumentation_ops);
 	compact_trigger_ent =
         proc_create("compact_trigger", 0666, NULL, &compact_trigger_ops);
+	compact_spurious_fail =
+        proc_create("compact_spurious_fail", 0666, NULL, &compact_spurious_fail_ops);
 
     printk(KERN_WARNING "inited compact instrumentation\n");
 
@@ -2190,6 +2272,8 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 		struct free_area *area = &cc->zone->free_area[order];
 		bool can_steal;
 
+        // TODO: inject spurious failures here (is this needed if I have the other two?)
+
 		/* Job done if page is free of the right migratetype */
 		if (!free_area_empty(area, migratetype))
 			return COMPACT_SUCCESS;
@@ -2458,6 +2542,7 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 			cc->rescan = true;
 		}
 
+        // TODO: insert spurious failure here to treat success as an abort.
 		switch (isolate_migratepages(cc->zone, cc)) {
 		case ISOLATE_ABORT:
 			ret = COMPACT_CONTENDED;
@@ -2492,6 +2577,7 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 
 		/* All pages were either migrated or will be released */
 		cc->nr_migratepages = 0;
+        // TODO: insert spurious failure here to treat success as abort.
 		if (err) {
 			putback_movable_pages(&cc->migratepages);
 			/*
