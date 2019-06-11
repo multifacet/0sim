@@ -2272,7 +2272,10 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 		struct free_area *area = &cc->zone->free_area[order];
 		bool can_steal;
 
-        // TODO: inject spurious failures here (is this needed if I have the other two?)
+        // Inject spurious failures here.
+        if (compact_spurious_fail_mode != SPURIOUS_FAIL_OFF) {
+            return COMPACT_CONTINUE;
+        }
 
 		/* Job done if page is free of the right migratetype */
 		if (!free_area_empty(area, migratetype))
