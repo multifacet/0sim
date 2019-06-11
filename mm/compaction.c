@@ -908,6 +908,8 @@ static unsigned long isolate_freepages_block(struct compact_control *cc,
 			break;
 		set_page_private(page, order);
 
+        inc_num_per_page_ops(isolated);
+
 		total_isolated += isolated;
 		cc->nr_freepages += isolated;
 		list_add_tail(&page->lru, freelist);
@@ -1983,6 +1985,7 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc)
 			unsigned long free_pfn;
 
 			nr_scanned++;
+            inc_num_per_page_ops(1);
 			free_pfn = page_to_pfn(freepage);
 			if (free_pfn < high_pfn) {
 				/*

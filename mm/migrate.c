@@ -1454,6 +1454,7 @@ retry:
 				if (PageTransHuge(page) && !PageHuge(page)) {
 					lock_page(page);
 					rc = split_huge_page_to_list(page, from);
+                    inc_num_per_page_ops(HPAGE_PMD_NR);
 					unlock_page(page);
 					if (!rc) {
 						list_safe_reset_next(page, page2, lru);
