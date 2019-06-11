@@ -2522,6 +2522,7 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 	while ((ret = compact_finished(cc)) == COMPACT_CONTINUE) {
 		int err;
 		unsigned long start_pfn = cc->migrate_pfn;
+        isolate_migrate_t im_ret;
 
 		/*
 		 * Avoid multiple rescans which can happen if a page cannot be
@@ -2537,8 +2538,16 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 			cc->rescan = true;
 		}
 
-        // TODO: insert spurious failure here to treat success as an abort.
-		switch (isolate_migratepages(cc->zone, cc)) {
+        im_ret = isolate_migratepages(cc->zone, cc);
+
+        // Insert spurious failure here to treat success as an abort.
+        if (compact_spurious_fail_mode == SPURIOUS_FAIL_ISOLATE) {
+            if (im_ret == ISOLATE_SUCCESS) {
+                im_ret = ISOLATE_ABORT;
+            }
+        }
+
+		switch (im_ret) {
 		case ISOLATE_ABORT:
 			ret = COMPACT_CONTENDED;
 			putback_movable_pages(&cc->migratepages);
@@ -2567,12 +2576,18 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 				compaction_free, (unsigned long)cc, cc->mode,
 				MR_COMPACTION);
 
+        // Insert spurious failure here to treat success as abort.
+        if (compact_spurious_fail_mode == SPURIOUS_FAIL_MIGRATE) {
+            if (!err) {
+                err = -EAGAIN;
+            }
+        }
+
 		trace_mm_compaction_migratepages(cc->nr_migratepages, err,
 							&cc->migratepages);
 
 		/* All pages were either migrated or will be released */
 		cc->nr_migratepages = 0;
-        // TODO: insert spurious failure here to treat success as abort.
 		if (err) {
 			putback_movable_pages(&cc->migratepages);
 			/*
