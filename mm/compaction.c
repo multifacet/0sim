@@ -2357,9 +2357,11 @@ static enum compact_result __compaction_suitable(struct zone *zone, int order,
 	 * If watermarks for high-order allocation are already met, there
 	 * should be no need for compaction at all.
 	 */
-	if (zone_watermark_ok(zone, order, watermark, classzone_idx,
-								alloc_flags))
-		return COMPACT_SUCCESS;
+	if (zone_watermark_ok(zone, order, watermark, classzone_idx, alloc_flags)) {
+        if (compact_spurious_fail_mode == SPURIOUS_FAIL_OFF) {
+            return COMPACT_SUCCESS;
+        }
+    }
 
 	/*
 	 * Watermarks for order-0 must be met for compaction to be able to
