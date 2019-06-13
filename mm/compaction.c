@@ -262,10 +262,10 @@ static ssize_t compact_trigger_write(
 
         // sanity
         if (results != COMPACT_SUCCESS) {
-            printk(KERN_WARNING "Compact fail %d\n", results);
+            printk(KERN_INFO "Compact fail %d\n", results);
             BUG_ON(captured[captured_idx]); // should be NULL
         } else {
-            printk(KERN_WARNING "Compact success\n");
+            printk(KERN_INFO "Compact success\n");
         }
     }
 
