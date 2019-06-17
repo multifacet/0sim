@@ -56,7 +56,8 @@ void end_swap_bio_write(struct bio *bio)
 		 * Also clear PG_reclaim to avoid rotate_reclaimable_page()
 		 */
 		set_page_dirty(page);
-		printk(KERN_ALERT "Write-error on swap-device (%u:%u:%Lu)\n",
+		printk(KERN_ALERT "Write-error (%d) on swap-device (%u:%u:%Lu)\n",
+                bio->bi_error,
 				imajor(bio->bi_bdev->bd_inode),
 				iminor(bio->bi_bdev->bd_inode),
 				(unsigned long long)bio->bi_iter.bi_sector);
