@@ -302,6 +302,8 @@ struct kvm_vcpu {
      */
     unsigned long long tsc_unmissing_cycles;
 
+    unsigned long long start_missing;
+
     /*
      * Set to true if we handled a page fault since the last reset.
      */

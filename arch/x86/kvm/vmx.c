@@ -8581,12 +8581,12 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
     // Actually offset guest TSC based on time up to now
     entry_exit_time = kvm_x86_get_entry_exit_time();
-    elapsed = kvm_vcpu_get_and_reset_tsc_missing_cycles(vcpu);
+    //elapsed = kvm_vcpu_get_and_reset_tsc_missing_cycles(vcpu);
 
-    vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
+    //vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
 
     // Update host total count
-    kvm_x86_elapse_time(elapsed);
+    //kvm_x86_elapse_time(elapsed);
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!cpu_has_virtual_nmis() && vmx->soft_vnmi_blocked))
@@ -8629,6 +8629,14 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
     zerosim_trace_vm_enter(vcpu->vcpu_id);
 
     end1 = rdtsc();
+
+    // Assumes that the vcpu is pinned to a single host core.
+    if (vcpu->start_missing != 0) {
+        entry_exit_time = kvm_x86_get_entry_exit_time();
+        elapsed = end1 - vcpu->start_missing;
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
+        kvm_x86_elapse_time(elapsed);
+    }
 
 	atomic_switch_perf_msrs(vmx);
 	debugctlmsr = get_debugctlmsr();
@@ -8756,7 +8764,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	loadsegment(es, __USER_DS);
 #endif
 
-    start2 = rdtsc();
+    vcpu->start_missing = start2 = rdtsc();
 
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)
 				  | (1 << VCPU_EXREG_RFLAGS)
