@@ -244,8 +244,6 @@ int kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	kvm_vcpu_set_dy_eligible(vcpu, false);
 	vcpu->preempted = false;
 
-    vcpu->tsc_missing_cycles = 0;
-    vcpu->tsc_unmissing_cycles = 0;
     vcpu->start_missing = 0;
     vcpu->handled_pf = 0;
 

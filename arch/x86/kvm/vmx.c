@@ -8567,26 +8567,9 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long debugctlmsr, cr4;
 
-    unsigned long long start1 = rdtsc(), start2, end1, end2;
-
-    unsigned long long page_fault_time;
+    unsigned long long page_fault_time = 0;
     unsigned long long entry_exit_time;
     unsigned long long elapsed;
-
-    // Account for page faults too.
-    if (kvm_vcpu_get_and_reset_pf_flag(vcpu)) {
-        page_fault_time = kvm_x86_get_page_fault_time();
-        kvm_vcpu_miss_more_cycles(vcpu, page_fault_time);
-    }
-
-    // Actually offset guest TSC based on time up to now
-    entry_exit_time = kvm_x86_get_entry_exit_time();
-    //elapsed = kvm_vcpu_get_and_reset_tsc_missing_cycles(vcpu);
-
-    //vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
-
-    // Update host total count
-    //kvm_x86_elapse_time(elapsed);
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!cpu_has_virtual_nmis() && vmx->soft_vnmi_blocked))
@@ -8628,13 +8611,16 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
     zerosim_trace_vm_enter(vcpu->vcpu_id);
 
-    end1 = rdtsc();
-
+    // Actually offset guest TSC based on time up to now.
     // Assumes that the vcpu is pinned to a single host core.
     if (vcpu->start_missing != 0) {
+        if (kvm_vcpu_get_and_reset_pf_flag(vcpu)) {
+            page_fault_time = kvm_x86_get_page_fault_time();
+        }
         entry_exit_time = kvm_x86_get_entry_exit_time();
-        elapsed = end1 - vcpu->start_missing;
-        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed-entry_exit_time);
+        elapsed = rdtsc() - vcpu->start_missing;
+        vmx_adjust_tsc_offset_guest_actually(vcpu, 
+                -elapsed-entry_exit_time-page_fault_time);
         kvm_x86_elapse_time(elapsed);
     }
 
@@ -8764,7 +8750,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	loadsegment(es, __USER_DS);
 #endif
 
-    vcpu->start_missing = start2 = rdtsc();
+    vcpu->start_missing = rdtsc();
 
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)
 				  | (1 << VCPU_EXREG_RFLAGS)
@@ -8808,11 +8794,6 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx_complete_atomic_exit(vmx);
 	vmx_recover_nmi_blocking(vmx);
 	vmx_complete_interrupts(vmx);
-
-    end2 = rdtsc();
-
-    // Account for elapsed time in this function.
-    kvm_vcpu_miss_more_cycles(vcpu, (end1 - start1) + (end2 - start2));
 }
 
 static void vmx_load_vmcs01(struct kvm_vcpu *vcpu)
