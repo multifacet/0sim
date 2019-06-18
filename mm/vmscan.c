@@ -51,6 +51,7 @@
 #include <linux/printk.h>
 #include <linux/dax.h>
 #include <linux/psi.h>
+#include <linux/proc_fs.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -62,6 +63,85 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
+
+////////////////////////////////////////////////////////////////////////////////
+// Instrumentation
+////////////////////////////////////////////////////////////////////////////////
+
+static struct proc_dir_entry *swap_instrumentation_ent = NULL;
+
+// Time elapsed during _idle_ reclamation since boot.
+static atomic64_t swap_instr_idle_time_elapsed = ATOMIC64_INIT(0);
+
+// Number of pages scanned since boot during idle reclamation.
+static atomic64_t swap_instr_idle_pages_scanned = ATOMIC64_INIT(0);
+
+// Number of pages reclaimed since boot during idle reclamation.
+static atomic64_t swap_instr_idle_pages_reclaimed = ATOMIC64_INIT(0);
+
+// Time elapsed during _direct_ reclamation since boot. TODO
+static atomic64_t swap_instr_direct_time_elapsed = ATOMIC64_INIT(0);
+
+// Number of pages scanned since boot during direct reclamation.
+static atomic64_t swap_instr_direct_pages_scanned = ATOMIC64_INIT(0);
+
+// Number of pages reclaimed since boot during direct reclamation.
+static atomic64_t swap_instr_direct_pages_reclaimed = ATOMIC64_INIT(0);
+
+#define INSTR_BUFSIZE 256
+
+// Returns the gathered stats.
+static ssize_t swap_instrumentation_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%llu %llu %llu %llu %llu %llu\n",
+            (u64)atomic64_read(&swap_instr_idle_time_elapsed),
+            (u64)atomic64_read(&swap_instr_idle_pages_scanned),
+            (u64)atomic64_read(&swap_instr_idle_pages_reclaimed),
+            (u64)atomic64_read(&swap_instr_direct_time_elapsed),
+            (u64)atomic64_read(&swap_instr_direct_pages_scanned),
+            (u64)atomic64_read(&swap_instr_direct_pages_reclaimed));
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+
+static struct file_operations swap_instrumentation_ops =
+{
+    .read = swap_instrumentation_read,
+};
+
+static int swap_instrumentation_init(void)
+{
+	swap_instrumentation_ent =
+        proc_create("swap_instrumentation", 0444, NULL, &swap_instrumentation_ops);
+
+    printk(KERN_WARNING "inited swap instrumentation\n");
+
+	return 0;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
 
 struct scan_control {
 	/* How many pages shrink_list() should reclaim */
@@ -2830,6 +2910,7 @@ static void shrink_zones(struct zonelist *zonelist, struct scan_control *sc)
 	struct zone *zone;
 	unsigned long nr_soft_reclaimed;
 	unsigned long nr_soft_scanned;
+    unsigned long old_scanned, old_reclaimed;
 	gfp_t orig_mask;
 	pg_data_t *last_pgdat = NULL;
 
@@ -2892,6 +2973,9 @@ static void shrink_zones(struct zonelist *zonelist, struct scan_control *sc)
 						&nr_soft_scanned);
 			sc->nr_reclaimed += nr_soft_reclaimed;
 			sc->nr_scanned += nr_soft_scanned;
+
+            atomic64_add(nr_soft_reclaimed, &swap_instr_direct_pages_reclaimed);
+            atomic64_add(nr_soft_scanned, &swap_instr_direct_pages_scanned);
 			/* need some check for avoid more shrink_zone() */
 		}
 
@@ -2899,7 +2983,12 @@ static void shrink_zones(struct zonelist *zonelist, struct scan_control *sc)
 		if (zone->zone_pgdat == last_pgdat)
 			continue;
 		last_pgdat = zone->zone_pgdat;
+
+        old_scanned = sc->nr_scanned;
+        old_reclaimed = sc->nr_reclaimed;
 		shrink_node(zone->zone_pgdat, sc);
+        atomic64_add(sc->nr_scanned - old_scanned, &swap_instr_direct_pages_scanned);
+        atomic64_add(sc->nr_reclaimed - old_reclaimed, &swap_instr_direct_pages_reclaimed);
 	}
 
 	/*
@@ -2947,6 +3036,8 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 	pg_data_t *last_pgdat;
 	struct zoneref *z;
 	struct zone *zone;
+    unsigned long long start_time = rdtsc();
+
 retry:
 	delayacct_freepages_start();
 
@@ -2985,12 +3076,16 @@ retry:
 
 	delayacct_freepages_end();
 
-	if (sc->nr_reclaimed)
+	if (sc->nr_reclaimed) {
+        atomic64_add(rdtsc() - start_time, &swap_instr_direct_time_elapsed);
 		return sc->nr_reclaimed;
+    }
 
 	/* Aborted reclaim to try compaction? don't OOM, then */
-	if (sc->compaction_ready)
+	if (sc->compaction_ready) {
+        atomic64_add(rdtsc() - start_time, &swap_instr_direct_time_elapsed);
 		return 1;
+    }
 
 	/* Untapped cgroup reserves?  Don't OOM, retry. */
 	if (sc->memcg_low_skipped) {
@@ -3000,6 +3095,7 @@ retry:
 		goto retry;
 	}
 
+    atomic64_add(rdtsc() - start_time, &swap_instr_direct_time_elapsed);
 	return 0;
 }
 
@@ -3401,6 +3497,7 @@ static bool kswapd_shrink_node(pg_data_t *pgdat,
 {
 	struct zone *zone;
 	int z;
+    unsigned long old_scanned, old_reclaimed;
 
 	/* Reclaim a number of pages proportional to the number of zones */
 	sc->nr_to_reclaim = 0;
@@ -3416,7 +3513,11 @@ static bool kswapd_shrink_node(pg_data_t *pgdat,
 	 * Historically care was taken to put equal pressure on all zones but
 	 * now pressure is applied based on node LRU order.
 	 */
+    old_scanned = sc->nr_scanned;
+    old_reclaimed = sc->nr_reclaimed;
 	shrink_node(pgdat, sc);
+    atomic64_add(sc->nr_scanned - old_scanned, &swap_instr_idle_pages_scanned);
+    atomic64_add(sc->nr_reclaimed - old_reclaimed, &swap_instr_idle_pages_reclaimed);
 
 	/*
 	 * Fragmentation may mean that the system cannot be rebalanced for
@@ -3568,6 +3669,9 @@ restart:
 		nr_soft_reclaimed = mem_cgroup_soft_limit_reclaim(pgdat, sc.order,
 						sc.gfp_mask, &nr_soft_scanned);
 		sc.nr_reclaimed += nr_soft_reclaimed;
+
+        atomic64_add(nr_soft_reclaimed, &swap_instr_idle_pages_reclaimed);
+        atomic64_add(nr_soft_scanned, &swap_instr_idle_pages_scanned);
 
 		/*
 		 * There should be no need to raise the scanning priority if
@@ -3764,6 +3868,7 @@ static int kswapd(void *p)
 	unsigned int classzone_idx = MAX_NR_ZONES - 1;
 	pg_data_t *pgdat = (pg_data_t*)p;
 	struct task_struct *tsk = current;
+    unsigned long long start_time;
 
 	struct reclaim_state reclaim_state = {
 		.reclaimed_slab = 0,
@@ -3818,6 +3923,8 @@ kswapd_try_sleep:
 		if (ret)
 			continue;
 
+        start_time = rdtsc();
+
 		/*
 		 * Reclaim begins at the requested order but if a high-order
 		 * reclaim fails then kswapd falls back to reclaiming for
@@ -3829,6 +3936,9 @@ kswapd_try_sleep:
 		trace_mm_vmscan_kswapd_wake(pgdat->node_id, classzone_idx,
 						alloc_order);
 		reclaim_order = balance_pgdat(pgdat, alloc_order, classzone_idx);
+
+        atomic64_add(rdtsc() - start_time, &swap_instr_idle_time_elapsed);
+
 		if (reclaim_order < alloc_order)
 			goto kswapd_try_sleep;
 	}
@@ -3999,6 +4109,11 @@ static int __init kswapd_init(void)
 					"mm/vmscan:online", kswapd_cpu_online,
 					NULL);
 	WARN_ON(ret < 0);
+
+    if (!swap_instrumentation_ent) {
+        swap_instrumentation_init();
+    }
+
 	return 0;
 }
 
