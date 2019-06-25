@@ -116,3 +116,5 @@ all.config
 guest_mnt
 install_mod_dir
 kbuild
+
+compile_commands.json
