@@ -146,3 +146,7 @@ x509.genkey
 
 # Clang's compilation database file
 /compile_commands.json
+
+guest_mnt
+install_mod_dir
+kbuild
