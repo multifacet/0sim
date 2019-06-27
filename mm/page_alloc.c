@@ -104,7 +104,7 @@ static ssize_t ktask_instrumentation_read(
 		return 0;
 
     // Actually output data
-	len += sprintf(buf, "%llu %llu %llu %llu\n",
+	len += sprintf(buf, "%llu %llu %llu %lu\n",
         atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK,
         ktask_mem_init_time,
         ktask_mem_free_time,
@@ -1693,13 +1693,15 @@ static int __init deferred_free_chunk(unsigned long pfn, unsigned long end_pfn,
 				      struct deferred_args *args)
 {
 	unsigned long nr_pages;
-    unsigned long nchunks, maxchunks;
+    unsigned long nchunks, maxchunks, flags;
 
     nchunks = atomic64_inc_return(&current_running_chunks);
 
     do {
-        maxchunks = atomic64_read(&max_running_chunks);
-    } while(nchunks > max_running_chunks &&
+        local_irq_save(flags);
+        maxchunks = *(volatile u64 *)&max_running_chunks;
+        local_irq_restore(flags);
+    } while(nchunks > maxchunks &&
           cmpxchg(&max_running_chunks, maxchunks, nchunks));
 
     nr_pages = deferred_free_pages(args->nid, args->zid, pfn, end_pfn);
@@ -1744,13 +1746,15 @@ static int __init deferred_init_chunk(unsigned long pfn, unsigned long end_pfn,
 				      struct deferred_args *args)
 {
 	unsigned long nr_pages;
-    unsigned long nchunks, maxchunks;
+    unsigned long nchunks, maxchunks, flags;
 
     nchunks = atomic64_inc_return(&current_running_chunks);
 
     do {
-        maxchunks = atomic64_read(&max_running_chunks);
-    } while(nchunks > max_running_chunks &&
+        local_irq_save(flags);
+        maxchunks = *(volatile u64 *)&max_running_chunks;
+        local_irq_restore(flags);
+    } while(nchunks > maxchunks &&
           cmpxchg(&max_running_chunks, maxchunks, nchunks));
 
     nr_pages = deferred_init_pages(args->nid, args->zid, pfn, end_pfn);
