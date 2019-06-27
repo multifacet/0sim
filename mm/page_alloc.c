@@ -132,6 +132,20 @@ static int ktask_instrumentation_init(void)
 	return 0;
 }
 
+// The factor to divide number of cores by.
+static int ktask_mem_ncores_div = 4;
+
+static int __init ktask_mem_ncores_div_init(char *s)
+{
+    pr_warn("Set ktask_mem_ncores_div=%d\n", ktask_mem_ncores_div);
+    if (kstrtoint(s, 0, &ktask_mem_ncores_div)) {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+early_param("ktask_mem_ncores_div", ktask_mem_ncores_div_init);
+
 ////////////////////////////////////////////////////////////////////////////////
 
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
@@ -1800,7 +1814,7 @@ static int __init deferred_init_memmap(void *data)
 	 * testing, a good value for a variety of systems was a quarter of the
 	 * CPUs on the node.
 	 */
-	nr_node_cpus = DIV_ROUND_UP(cpumask_weight(cpumask), 4);
+	nr_node_cpus = DIV_ROUND_UP(cpumask_weight(cpumask), ktask_mem_ncores_div);
 
 	/* Sanity check boundaries */
 	BUG_ON(pgdat->first_deferred_pfn < pgdat->node_start_pfn);
