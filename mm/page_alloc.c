@@ -87,6 +87,9 @@ static atomic64_t num_deferred_init_chunks = ATOMIC64_INIT(0);
 static unsigned long long ktask_mem_init_time = 0;
 static unsigned long long ktask_mem_free_time = 0;
 
+static atomic64_t current_running_chunks = ATOMIC64_INIT(0);
+static volatile unsigned long max_running_chunks = 0;
+
 #define KTASK_BUFSIZE 256
 
 static ssize_t ktask_instrumentation_read(
@@ -101,10 +104,11 @@ static ssize_t ktask_instrumentation_read(
 		return 0;
 
     // Actually output data
-	len += sprintf(buf, "%llu %llu %llu\n",
+	len += sprintf(buf, "%llu %llu %llu %llu\n",
         atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK,
         ktask_mem_init_time,
-        ktask_mem_free_time
+        ktask_mem_free_time,
+        max_running_chunks
     );
 
     // copy output to user
@@ -1688,9 +1692,21 @@ static int __init deferred_free_pages(int nid, int zid, unsigned long pfn,
 static int __init deferred_free_chunk(unsigned long pfn, unsigned long end_pfn,
 				      struct deferred_args *args)
 {
-	unsigned long nr_pages = deferred_free_pages(args->nid, args->zid, pfn,
-						     end_pfn);
+	unsigned long nr_pages;
+    unsigned long nchunks, maxchunks;
+
+    nchunks = atomic64_inc_return(&current_running_chunks);
+
+    do {
+        maxchunks = atomic64_read(&max_running_chunks);
+    while(nchunks > max_running_chunks &&
+          cmpxchg(&max_running_chunks, maxchunks, nchunks));
+
+    nr_pages = deferred_free_pages(args->nid, args->zid, pfn, end_pfn);
 	atomic64_add(nr_pages, &args->nr_pages);
+
+    atomic64_dec(&current_running_chunks);
+
 	return KTASK_RETURN_SUCCESS;
 }
 
@@ -1727,9 +1743,21 @@ static int __init deferred_init_pages(int nid, int zid, unsigned long pfn,
 static int __init deferred_init_chunk(unsigned long pfn, unsigned long end_pfn,
 				      struct deferred_args *args)
 {
-	unsigned long nr_pages = deferred_init_pages(args->nid, args->zid, pfn,
-						     end_pfn);
+	unsigned long nr_pages;
+    unsigned long nchunks, maxchunks;
+
+    nchunks = atomic64_inc_return(&current_running_chunks);
+
+    do {
+        maxchunks = atomic64_read(&max_running_chunks);
+    while(nchunks > max_running_chunks &&
+          cmpxchg(&max_running_chunks, maxchunks, nchunks));
+
+    nr_pages = deferred_init_pages(args->nid, args->zid, pfn, end_pfn);
 	atomic64_add(nr_pages, &args->nr_pages);
+
+    atomic64_dec(&current_running_chunks);
+
 	return KTASK_RETURN_SUCCESS;
 }
 
