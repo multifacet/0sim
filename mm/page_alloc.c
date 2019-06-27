@@ -137,7 +137,7 @@ static int ktask_mem_ncores_div = 4;
 
 static int __init ktask_mem_ncores_div_init(char *str)
 {
-    if (get_option(str, &ktask_mem_ncores_div) != 1) {
+    if (get_option(&str, &ktask_mem_ncores_div) != 1) {
         pr_warn("Set ktask_mem_ncores_div failed\n");
 
         return -EINVAL;
