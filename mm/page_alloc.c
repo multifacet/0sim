@@ -135,16 +135,19 @@ static int ktask_instrumentation_init(void)
 // The factor to divide number of cores by.
 static int ktask_mem_ncores_div = 4;
 
-static int __init ktask_mem_ncores_div_init(char *s)
+static int __init ktask_mem_ncores_div_init(char *str)
 {
-    pr_warn("Set ktask_mem_ncores_div=%d\n", ktask_mem_ncores_div);
-    if (kstrtoint(s, 0, &ktask_mem_ncores_div)) {
+    if (get_option(str, &ktask_mem_ncores_div) != 1) {
+        pr_warn("Set ktask_mem_ncores_div failed\n");
+
         return -EINVAL;
     }
 
-    return 0;
+    pr_warn("Set ktask_mem_ncores_div=%d\n", ktask_mem_ncores_div);
+
+    return 1;
 }
-early_param("ktask_mem_ncores_div", ktask_mem_ncores_div_init);
+__setup("ktask_mem_ncores_div=", ktask_mem_ncores_div_init);
 
 ////////////////////////////////////////////////////////////////////////////////
 
