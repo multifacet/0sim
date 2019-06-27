@@ -1699,7 +1699,7 @@ static int __init deferred_free_chunk(unsigned long pfn, unsigned long end_pfn,
 
     do {
         maxchunks = atomic64_read(&max_running_chunks);
-    while(nchunks > max_running_chunks &&
+    } while(nchunks > max_running_chunks &&
           cmpxchg(&max_running_chunks, maxchunks, nchunks));
 
     nr_pages = deferred_free_pages(args->nid, args->zid, pfn, end_pfn);
@@ -1750,7 +1750,7 @@ static int __init deferred_init_chunk(unsigned long pfn, unsigned long end_pfn,
 
     do {
         maxchunks = atomic64_read(&max_running_chunks);
-    while(nchunks > max_running_chunks &&
+    } while(nchunks > max_running_chunks &&
           cmpxchg(&max_running_chunks, maxchunks, nchunks));
 
     nr_pages = deferred_init_pages(args->nid, args->zid, pfn, end_pfn);
