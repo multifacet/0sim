@@ -69,12 +69,97 @@
 #include <linux/lockdep.h>
 #include <linux/nmi.h>
 #include <linux/psi.h>
+#include <linux/proc_fs.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
 #include "internal.h"
 #include "shuffle.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Instrumentation
+////////////////////////////////////////////////////////////////////////////////
+
+static struct proc_dir_entry *swap_extra_factor_ent = NULL;
+
+static int swap_extra_factor = 0;
+
+#define INSTR_BUFSIZE 256
+
+static ssize_t swap_extra_factor_write(
+        struct file *file, const char __user *ubuf, size_t len, loff_t *offset)
+{
+    int num, factor;
+    char input[INSTR_BUFSIZE];
+
+    // Parse input
+    if(*offset > 0 || len > INSTR_BUFSIZE) {
+		return -EFAULT;
+    }
+
+	if(copy_from_user(input, ubuf, len)) {
+		return -EFAULT;
+    }
+
+	num = sscanf(input, "%d", &factor);
+	if(num != 1 || factor > MAX_ORDER || factor < -MAX_ORDER) {
+		return -EINVAL;
+    }
+
+    // Set mode
+    swap_extra_factor = factor;
+
+    printk(KERN_WARNING "Swap extra factor set to %d\n",
+            swap_extra_factor);
+
+    return len;
+}
+
+static ssize_t swap_extra_factor_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%d\n", swap_extra_factor);
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+static struct file_operations swap_extra_factor_ops =
+{
+    .write = swap_extra_factor_write,
+    .read = swap_extra_factor_read,
+};
+
+static int swap_extra_factor_init(void)
+{
+	swap_extra_factor_ent =
+        proc_create("swap_extra_factor", 0666, NULL, &swap_extra_factor_ops);
+
+    printk(KERN_WARNING "inited swap extra factor\n");
+
+	return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
@@ -1767,6 +1852,7 @@ zone_empty:
 		pgdat->node_id,	nr_pages, jiffies_to_msecs(jiffies - start));
 
 	pgdat_init_report_one_done();
+
 	return 0;
 }
 
@@ -1904,6 +1990,8 @@ void __init page_alloc_init_late(void)
 
 	for_each_populated_zone(zone)
 		set_zone_contiguous(zone);
+
+    swap_extra_factor_init();
 }
 
 #ifdef CONFIG_CMA
@@ -4067,8 +4155,10 @@ __alloc_pages_direct_reclaim(gfp_t gfp_mask, unsigned int order,
 {
 	struct page *page = NULL;
 	bool drained = false;
+    unsigned int actual_order = (unsigned int)min(MAX_ORDER,
+            max(0, ((int)order) + swap_extra_factor));
 
-	*did_some_progress = __perform_reclaim(gfp_mask, order, ac);
+	*did_some_progress = __perform_reclaim(gfp_mask, actual_order, ac);
 	if (unlikely(!(*did_some_progress)))
 		return NULL;
 
