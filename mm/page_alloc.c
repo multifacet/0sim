@@ -73,6 +73,60 @@
 #include <asm/div64.h>
 #include "internal.h"
 
+////////////////////////////////////////////////////////////////////////////////
+// Instrumentation
+////////////////////////////////////////////////////////////////////////////////
+
+static struct proc_dir_entry *ktask_instrumentation_ent;
+
+static atomic64_t num_deferred_init_chunks = ATOMIC64_INIT(0);
+
+static unsigned long long ktask_mem_init_time = 0;
+static unsigned long long ktask_mem_free_time = 0;
+
+#define KTASK_BUFSIZE 256
+
+static ssize_t ktask_instrumentation_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[KTASK_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0 || count < KTASK_BUFSIZE)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%llu %llu %llu\n",
+        atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK,
+        ktask_mem_init_time,
+        ktask_mem_free_time,
+    );
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+static struct file_operations ktask_instrumentation_ops =
+{
+	.read = ktask_instrumentation_read,
+};
+
+static int ktask_instrumentation_init(void)
+{
+	ktask_instrumentation_ent =
+        proc_create("ktask_instrumentation", 0444, NULL, &ktask_instrumentation_ops);
+	return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
 #define MIN_PERCPU_PAGELIST_FRACTION	(8)
@@ -1660,6 +1714,7 @@ static int __init deferred_init_memmap(void *data)
 	struct zone *zone;
 	const struct cpumask *cpumask = cpumask_of_node(pgdat->node_id);
 	u64 i;
+    unsigned long long init_start_time, init_finish_time, free_finish_time;
 
 	/* Bind memory initialisation thread to a local node if possible */
 	if (!cpumask_empty(cpumask))
@@ -1686,6 +1741,8 @@ static int __init deferred_init_memmap(void *data)
 	}
 	first_init_pfn = max(zone->zone_start_pfn, first_init_pfn);
 
+    init_start_time = rdtsc();
+
 	/*
 	 * Initialize and free pages. We do it in two loops: first we initialize
 	 * struct page, than free to buddy allocator, because while we are
@@ -1696,13 +1753,19 @@ static int __init deferred_init_memmap(void *data)
 		spfn = max_t(unsigned long, first_init_pfn, PFN_UP(spa));
 		epfn = min_t(unsigned long, zone_end_pfn(zone), PFN_DOWN(epa));
 		nr_pages += deferred_init_pages(nid, zid, spfn, epfn);
+        atomic64_add(epfn - spfn, &num_deferred_init_chunks);
 	}
+    init_finish_time = rdtsc();
 	for_each_free_mem_range(i, nid, MEMBLOCK_NONE, &spa, &epa, NULL) {
 		spfn = max_t(unsigned long, first_init_pfn, PFN_UP(spa));
 		epfn = min_t(unsigned long, zone_end_pfn(zone), PFN_DOWN(epa));
 		deferred_free_pages(nid, zid, spfn, epfn);
 	}
+    free_finish_time = rdtsc();
 	pgdat_resize_unlock(pgdat, &flags);
+
+    ktask_mem_init_time = init_finish_time - init_start_time;
+    ktask_mem_free_time = free_finish_time - init_finish_time;
 
 	/* Sanity check that the next zone really is unpopulated */
 	WARN_ON(++zid < MAX_NR_ZONES && populated_zone(++zone));
@@ -1851,6 +1914,8 @@ void __init page_alloc_init_late(void)
 
 	for_each_populated_zone(zone)
 		set_zone_contiguous(zone);
+
+    ktask_instrumentation_init();
 }
 
 #ifdef CONFIG_CMA
