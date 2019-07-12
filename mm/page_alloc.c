@@ -187,9 +187,9 @@ static ssize_t ktask_instrumentation_read(
 
     // Actually output data
 	len += sprintf(buf, "%llu %llu %llu\n",
-        atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK,
+        atomic64_read(&num_deferred_init_chunks),
         ktask_mem_init_time,
-        ktask_mem_free_time,
+        ktask_mem_free_time
     );
 
     // copy output to user
