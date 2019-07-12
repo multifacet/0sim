@@ -67,6 +67,7 @@
 #include <linux/lockdep.h>
 #include <linux/nmi.h>
 #include <linux/psi.h>
+#include <linux/proc_fs.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
@@ -99,9 +100,9 @@ static ssize_t ktask_instrumentation_read(
 
     // Actually output data
 	len += sprintf(buf, "%llu %llu %llu\n",
-        atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK,
+        atomic64_read(&num_deferred_init_chunks),
         ktask_mem_init_time,
-        ktask_mem_free_time,
+        ktask_mem_free_time
     );
 
     // copy output to user
