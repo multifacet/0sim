@@ -161,6 +161,60 @@ static int swap_extra_factor_init(void)
 
 ////////////////////////////////////////////////////////////////////////////////
 
+////////////////////////////////////////////////////////////////////////////////
+// Instrumentation
+////////////////////////////////////////////////////////////////////////////////
+
+static struct proc_dir_entry *ktask_instrumentation_ent;
+
+static atomic64_t num_deferred_init_chunks = ATOMIC64_INIT(0);
+
+static unsigned long long ktask_mem_init_time = 0;
+static unsigned long long ktask_mem_free_time = 0;
+
+#define KTASK_BUFSIZE 256
+
+static ssize_t ktask_instrumentation_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[KTASK_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0 || count < KTASK_BUFSIZE)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%llu %llu %llu\n",
+        atomic64_read(&num_deferred_init_chunks) / KTASK_PTE_MINCHUNK,
+        ktask_mem_init_time,
+        ktask_mem_free_time,
+    );
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+static struct file_operations ktask_instrumentation_ops =
+{
+	.read = ktask_instrumentation_read,
+};
+
+static int ktask_instrumentation_init(void)
+{
+	ktask_instrumentation_ent =
+        proc_create("ktask_instrumentation", 0444, NULL, &ktask_instrumentation_ops);
+	return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
 #define MIN_PERCPU_PAGELIST_FRACTION	(8)
@@ -1759,6 +1813,8 @@ deferred_init_maxorder(u64 *i, struct zone *zone, unsigned long *start_pfn,
 	unsigned long nr_pages = 0;
 	u64 j = *i;
 
+    init_start_time = rdtsc();
+
 	/* First we loop through and initialize the page values */
 	for_each_free_mem_pfn_range_in_zone_from(j, zone, start_pfn, end_pfn) {
 		unsigned long t;
@@ -1774,6 +1830,8 @@ deferred_init_maxorder(u64 *i, struct zone *zone, unsigned long *start_pfn,
 			break;
 		}
 	}
+
+    init_finish_time = rdtsc();
 
 	/* Reset values and now loop through freeing pages as needed */
 	swap(j, *i);
@@ -1791,6 +1849,11 @@ deferred_init_maxorder(u64 *i, struct zone *zone, unsigned long *start_pfn,
 			break;
 	}
 
+    free_finish_time = rdtsc();
+
+    ktask_mem_init_time = init_finish_time - init_start_time;
+    ktask_mem_free_time = free_finish_time - init_finish_time;
+
 	return nr_pages;
 }
 
@@ -1805,6 +1868,7 @@ static int __init deferred_init_memmap(void *data)
 	struct zone *zone;
 	int zid;
 	u64 i;
+    unsigned long long init_start_time, init_finish_time, free_finish_time;
 
 	/* Bind memory initialisation thread to a local node if possible */
 	if (!cpumask_empty(cpumask))
@@ -1992,6 +2056,7 @@ void __init page_alloc_init_late(void)
 		set_zone_contiguous(zone);
 
     swap_extra_factor_init();
+    ktask_instrumentation_init();
 }
 
 #ifdef CONFIG_CMA
