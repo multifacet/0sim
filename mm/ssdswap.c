@@ -1,10 +1,9 @@
 /*
  * A module which makes another device look like a non-rotational device.
  *
- * After loading this module, the sysfs can be used to choose a device to make
- * non-rotational. The device should not be mounted or in use! (Otherwise, you
- * could get weird results)...  The device is chosen by writing its path to
- * /sys/module/ssdswap/device. To unset the device, write an empty string.
+ * After loading this module, the sysfs can be used to make a device
+ * non-rotational. The device should be mounted, but should not be in active
+ * use. To reset, reboot the machine.
  */
 
 #include <linux/module.h>
@@ -35,9 +34,6 @@ module_param_cb(device, &device_param_ops, &device_path, 0644);
 // The block device we are filtering
 static struct block_device *blkdev;
 
-// The value of the QUEUE_NONROT flag before we fiddled with it.
-static bool original_nonrot_flag;
-
 static int isspace(int c) {
     switch (c) {
         case '\n':
@@ -63,20 +59,6 @@ static unsigned long strncpy_strip(char *dest, const char *src, unsigned long ma
     return j;
 }
 
-// Unset the current device if there is one. This operation is idempotent.
-static void unset_device(void) {
-    if (blkdev) {
-        if (!original_nonrot_flag) {
-            BUG_ON(!blkdev->bd_disk);
-            queue_flag_clear_unlocked(QUEUE_FLAG_NONROT,
-                    bdev_get_queue(blkdev));
-        }
-        blkdev = NULL;
-    }
-
-    BUG_ON(blkdev);
-}
-
 // Set the current device to the given path. This operation is also idempotent.
 static int set_device(const char *path)
 {
@@ -92,10 +74,6 @@ static int set_device(const char *path)
     }
 
     printk(KERN_INFO "ssdswap set device: %s", path);
-
-    // Always unset...
-    unset_device();
-    BUG_ON(blkdev);
 
     // strip any whitespace
     path_len = strncpy_strip(buf, path, MAX_PATH_LEN);
@@ -116,9 +94,6 @@ static int set_device(const char *path)
         }
 
         BUG_ON(!blkdev->bd_disk);
-
-        // Save the original value of the flag
-        original_nonrot_flag = blk_queue_nonrot(bdev_get_queue(blkdev));
 
         // Then set it
         queue_flag_set_unlocked(QUEUE_FLAG_NONROT, bdev_get_queue(blkdev));
@@ -146,8 +121,6 @@ static int __init ssdswap_init(void)
 
 static void __exit ssdswap_exit(void)
 {
-    unset_device();
-
     printk(KERN_INFO "ssdswap off");
 }
 
