@@ -175,6 +175,8 @@ void putback_movable_pages(struct list_head *l)
 			continue;
 		}
 		list_del(&page->lru);
+        inc_num_per_page_ops(1);
+        inc_num_per_page_undone_ops(1);
 		/*
 		 * We isolated non-lru movable page so here we can use
 		 * __PageMovable because LRU page's mapping cannot have
@@ -1423,6 +1425,8 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
 retry:
 			cond_resched();
 
+            inc_num_per_page_ops(1);
+
 			if (PageHuge(page))
 				rc = unmap_and_move_huge_page(get_new_page,
 						put_new_page, private, page,
@@ -1448,6 +1452,7 @@ retry:
 				if (PageTransHuge(page) && !PageHuge(page)) {
 					lock_page(page);
 					rc = split_huge_page_to_list(page, from);
+                    inc_num_per_page_ops(HPAGE_PMD_NR);
 					unlock_page(page);
 					if (!rc) {
 						list_safe_reset_next(page, page2, lru);

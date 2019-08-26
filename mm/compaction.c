@@ -9,11 +9,13 @@
  * Copyright IBM Corp. 2007-2010 Mel Gorman <mel@csn.ul.ie>
  */
 #include <linux/cpu.h>
+#include <linux/cpuset.h>
 #include <linux/swap.h>
 #include <linux/migrate.h>
 #include <linux/compaction.h>
 #include <linux/mm_inline.h>
 #include <linux/sched/signal.h>
+#include <linux/sched/mm.h>
 #include <linux/backing-dev.h>
 #include <linux/sysctl.h>
 #include <linux/sysfs.h>
@@ -23,7 +25,382 @@
 #include <linux/freezer.h>
 #include <linux/page_owner.h>
 #include <linux/psi.h>
+#include <linux/syscalls.h>
+#include <linux/proc_fs.h>
+
+#include <asm/cpufeature.h>
+
 #include "internal.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Instrumentation
+////////////////////////////////////////////////////////////////////////////////
+
+static struct proc_dir_entry *compact_instrumentation_ent;
+static struct proc_dir_entry *compact_trigger_ent;
+static struct proc_dir_entry *compact_spurious_fail;
+
+// The number of operations that are repeated for pages (e.g. isolation,
+// migration, freeing, etc.). This counter includes ops that undo other ops.
+// It is a proxy for the total amount of work done during compaction.
+static unsigned long num_per_page_ops = 0;
+
+// The number of operations counted towards `num_per_page_ops` that were later
+// undone. This is a proxy for the amount of wasted work.
+static unsigned long num_per_page_undone_ops = 0;
+
+// True if a compaction trigger is currently running.
+static bool trigger_in_progress = 0;
+
+// Different ways to inject compaction failures (or turn them off).
+enum spurious_fail_mode {
+    SPURIOUS_FAIL_OFF = 0,
+    SPURIOUS_FAIL_ISOLATE = 1,
+    SPURIOUS_FAIL_MIGRATE = 2,
+
+    // number of modes
+    SPURIOUS_FAIL_NUM_MODES,
+};
+
+// What type of failures are currently being injected (default: none).
+static enum spurious_fail_mode compact_spurious_fail_mode = SPURIOUS_FAIL_OFF;
+
+void inc_num_per_page_ops(unsigned long n)
+{
+    num_per_page_ops += n;
+}
+
+void inc_num_per_page_undone_ops(unsigned long n)
+{
+    num_per_page_undone_ops += n;
+}
+
+#define INSTR_BUFSIZE 256
+
+static ssize_t compact_instrumentation_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%lu %lu\n",
+        num_per_page_ops,
+        num_per_page_undone_ops
+    );
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+// Copied from page_alloc.c...
+static inline unsigned int
+gfp_to_alloc_flags(gfp_t gfp_mask)
+{
+	unsigned int alloc_flags = ALLOC_WMARK_MIN | ALLOC_CPUSET;
+
+	/* __GFP_HIGH is assumed to be the same as ALLOC_HIGH to save a branch. */
+	BUILD_BUG_ON(__GFP_HIGH != (__force gfp_t) ALLOC_HIGH);
+
+	/*
+	 * The caller may dip into page reserves a bit more if the caller
+	 * cannot run direct reclaim, or if the caller has realtime scheduling
+	 * policy or is asking for __GFP_HIGH memory.  GFP_ATOMIC requests will
+	 * set both ALLOC_HARDER (__GFP_ATOMIC) and ALLOC_HIGH (__GFP_HIGH).
+	 */
+	alloc_flags |= (__force int) (gfp_mask & __GFP_HIGH);
+
+	if (gfp_mask & __GFP_ATOMIC) {
+		/*
+		 * Not worth trying to allocate harder for __GFP_NOMEMALLOC even
+		 * if it can't schedule.
+		 */
+		if (!(gfp_mask & __GFP_NOMEMALLOC))
+			alloc_flags |= ALLOC_HARDER;
+		/*
+		 * Ignore cpuset mems for GFP_ATOMIC rather than fail, see the
+		 * comment for __cpuset_node_allowed().
+		 */
+		alloc_flags &= ~ALLOC_CPUSET;
+	} else if (unlikely(rt_task(current)) && !in_interrupt())
+		alloc_flags |= ALLOC_HARDER;
+
+	if (gfp_mask & __GFP_KSWAPD_RECLAIM)
+		alloc_flags |= ALLOC_KSWAPD;
+
+#ifdef CONFIG_CMA
+	if (gfpflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
+		alloc_flags |= ALLOC_CMA;
+#endif
+	return alloc_flags;
+}
+
+// copied from page_alloc.c
+static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
+		int preferred_nid, nodemask_t *nodemask,
+		struct alloc_context *ac, gfp_t *alloc_mask,
+		unsigned int *alloc_flags)
+{
+	ac->high_zoneidx = gfp_zone(gfp_mask);
+	ac->zonelist = node_zonelist(preferred_nid, gfp_mask);
+	ac->nodemask = nodemask;
+	ac->migratetype = gfpflags_to_migratetype(gfp_mask);
+
+	if (cpusets_enabled()) {
+		*alloc_mask |= __GFP_HARDWALL;
+		if (!ac->nodemask)
+			ac->nodemask = &cpuset_current_mems_allowed;
+		else
+			*alloc_flags |= ALLOC_CPUSET;
+	}
+
+	fs_reclaim_acquire(gfp_mask);
+	fs_reclaim_release(gfp_mask);
+
+	might_sleep_if(gfp_mask & __GFP_DIRECT_RECLAIM);
+
+    /* Not needed. Used for testing.
+	if (should_fail_alloc_page(gfp_mask, order))
+		return false;
+    */
+
+	if (IS_ENABLED(CONFIG_CMA) && ac->migratetype == MIGRATE_MOVABLE)
+		*alloc_flags |= ALLOC_CMA;
+
+	return true;
+}
+
+// copied from page_alloc.c
+static inline void finalise_ac(gfp_t gfp_mask, struct alloc_context *ac)
+{
+	/* Dirty zone balancing only done in the fast path */
+	ac->spread_dirty_pages = (gfp_mask & __GFP_WRITE);
+
+	/*
+	 * The preferred zone is used for statistics but crucially it is
+	 * also used as the starting point for the zonelist iterator. It
+	 * may get reset for allocations that ignore memory policies.
+	 */
+	ac->preferred_zoneref = first_zones_zonelist(ac->zonelist,
+					ac->high_zoneidx, ac->nodemask);
+}
+
+#define MAX_COMPACT_TRIGGER_PAGES 512
+
+// Put it here so the stack frame of the write handler is not too large.
+static struct page *captured[MAX_COMPACT_TRIGGER_PAGES];
+
+// A write to this file will cause call `try_to_compact_pages` to allocate a
+// page and then free it.
+static ssize_t compact_trigger_write(
+        struct file *file, const char __user *ubuf, size_t len, loff_t *offset)
+{
+    const gfp_t gfp_mask =
+        __GFP_MOVABLE | __GFP_NOMEMALLOC | __GFP_FS | __GFP_RECLAIM |
+        __GFP_RETRY_MAYFAIL | __GFP_IO;
+    gfp_t alloc_mask = gfp_mask;
+    unsigned int alloc_flags = gfp_to_alloc_flags(gfp_mask);
+    const unsigned int order = 9; // (1 << order) pages = 2 MiB (same as huge page)
+    const enum compact_priority prio = MIN_COMPACT_PRIORITY; // Try hard!
+    enum compact_result results;
+    int captured_idx = 0;
+    int i, num, npages;
+    char input[INSTR_BUFSIZE];
+
+    // If already working, return.
+    if (trigger_in_progress) {
+        return -EBUSY;
+    }
+
+    // Parse input
+    if(*offset > 0 || len > INSTR_BUFSIZE) {
+		return -EFAULT;
+    }
+
+	if(copy_from_user(input, ubuf, len)) {
+		return -EFAULT;
+    }
+
+	num = sscanf(input, "%d", &npages);
+	if(num != 1 || npages > MAX_COMPACT_TRIGGER_PAGES) {
+		return -EINVAL;
+    }
+
+    printk(KERN_WARNING "Compaction trigger %d\n", npages);
+
+    trigger_in_progress = 1;
+
+    // Init captured array
+    for (i = 0; i < MAX_COMPACT_TRIGGER_PAGES; ++i) {
+        captured[i] = NULL;
+    }
+
+    for (captured_idx = 0; captured_idx < npages; ++captured_idx) {
+        // Init alloc_context
+        struct alloc_context ac = {};
+        prepare_alloc_pages(gfp_mask, order, numa_node_id(), /* nodemask= */ NULL,
+                &ac, &alloc_mask, &alloc_flags);
+        finalise_ac(gfp_mask, &ac);
+
+        // Start compaction
+        results = try_to_compact_pages(
+                gfp_mask, order, alloc_flags, &ac, prio, &captured[captured_idx]);
+
+        // sanity
+        if (results != COMPACT_SUCCESS) {
+            printk(KERN_INFO "Compact fail %d\n", results);
+            BUG_ON(captured[captured_idx]); // should be NULL
+        } else {
+            printk(KERN_INFO "Compact success\n");
+        }
+    }
+
+    // free the pages we captured
+    for (captured_idx = 0; captured_idx < npages; ++captured_idx) {
+        // free the page if one was allocated
+        if (captured[captured_idx]) {
+            __free_pages(captured[captured_idx], order);
+        }
+    }
+
+    // Done!
+    trigger_in_progress = 0;
+    return len;
+}
+
+// Returns 1 if there is a trigger in progress, and 0 otherwise.
+static ssize_t compact_trigger_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%d\n", trigger_in_progress);
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+// A write to this file will turn on or turn off the given types of spurious failures.
+static ssize_t compact_spurious_fail_write(
+        struct file *file, const char __user *ubuf, size_t len, loff_t *offset)
+{
+    int num, mode_raw;
+    char input[INSTR_BUFSIZE];
+
+    // Parse input
+    if(*offset > 0 || len > INSTR_BUFSIZE) {
+		return -EFAULT;
+    }
+
+	if(copy_from_user(input, ubuf, len)) {
+		return -EFAULT;
+    }
+
+	num = sscanf(input, "%d", &mode_raw);
+	if(num != 1 || mode_raw >= SPURIOUS_FAIL_NUM_MODES) {
+		return -EINVAL;
+    }
+
+    // Set mode
+    compact_spurious_fail_mode = (enum spurious_fail_mode)mode_raw;
+
+    printk(KERN_WARNING "Compaction spurious failure mode set to %d\n",
+            compact_spurious_fail_mode);
+
+    return len;
+}
+
+// Returns the type of spurious compaction failures currently enabled.
+static ssize_t compact_spurious_fail_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%d\n", compact_spurious_fail_mode);
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+
+static struct file_operations compact_instrumentation_ops =
+{
+	.read = compact_instrumentation_read,
+};
+
+static struct file_operations compact_trigger_ops =
+{
+    .write = compact_trigger_write,
+    .read = compact_trigger_read,
+};
+
+static struct file_operations compact_spurious_fail_ops =
+{
+    .write = compact_spurious_fail_write,
+    .read = compact_spurious_fail_read,
+};
+
+static int compact_instrumentation_init(void)
+{
+	compact_instrumentation_ent =
+        proc_create("compact_instrumentation", 0444, NULL, &compact_instrumentation_ops);
+	compact_trigger_ent =
+        proc_create("compact_trigger", 0666, NULL, &compact_trigger_ops);
+	compact_spurious_fail =
+        proc_create("compact_spurious_fail", 0666, NULL, &compact_spurious_fail_ops);
+
+    printk(KERN_WARNING "inited compact instrumentation\n");
+
+	return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 #ifdef CONFIG_COMPACTION
 static inline void count_compact_event(enum vm_event_item item)
@@ -58,6 +435,7 @@ static unsigned long release_freepages(struct list_head *freelist)
 	list_for_each_entry_safe(page, next, freelist, lru) {
 		unsigned long pfn = page_to_pfn(page);
 		list_del(&page->lru);
+        inc_num_per_page_ops(1);
 		__free_page(page);
 		if (pfn > high_pfn)
 			high_pfn = pfn;
@@ -612,6 +990,8 @@ static unsigned long isolate_freepages_block(struct compact_control *cc,
 			break;
 		set_page_private(page, order);
 
+        inc_num_per_page_ops(isolated);
+
 		total_isolated += isolated;
 		cc->nr_freepages += isolated;
 		list_add_tail(&page->lru, freelist);
@@ -975,6 +1355,7 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 		lruvec = mem_cgroup_page_lruvec(page, pgdat);
 
 		/* Try isolate the page */
+        inc_num_per_page_ops(1);
 		if (__isolate_lru_page(page, isolate_mode) != 0)
 			goto isolate_fail;
 
@@ -1681,6 +2062,7 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc)
 			unsigned long free_pfn;
 
 			nr_scanned++;
+            inc_num_per_page_ops(1);
 			free_pfn = page_to_pfn(freepage);
 			if (free_pfn < high_pfn) {
 				/*
@@ -1885,6 +2267,11 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 		struct free_area *area = &cc->zone->free_area[order];
 		bool can_steal;
 
+        // Inject spurious failures here.
+        if (compact_spurious_fail_mode != SPURIOUS_FAIL_OFF) {
+            return COMPACT_CONTINUE;
+        }
+
 		/* Job done if page is free of the right migratetype */
 		if (!list_empty(&area->free_list[migratetype]))
 			return COMPACT_SUCCESS;
@@ -1965,9 +2352,11 @@ static enum compact_result __compaction_suitable(struct zone *zone, int order,
 	 * If watermarks for high-order allocation are already met, there
 	 * should be no need for compaction at all.
 	 */
-	if (zone_watermark_ok(zone, order, watermark, classzone_idx,
-								alloc_flags))
-		return COMPACT_SUCCESS;
+	if (zone_watermark_ok(zone, order, watermark, classzone_idx, alloc_flags)) {
+        if (compact_spurious_fail_mode == SPURIOUS_FAIL_OFF) {
+            return COMPACT_SUCCESS;
+        }
+    }
 
 	/*
 	 * Watermarks for order-0 must be met for compaction to be able to
@@ -2138,6 +2527,7 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 	while ((ret = compact_finished(cc)) == COMPACT_CONTINUE) {
 		int err;
 		unsigned long start_pfn = cc->migrate_pfn;
+        isolate_migrate_t im_ret;
 
 		/*
 		 * Avoid multiple rescans which can happen if a page cannot be
@@ -2153,7 +2543,16 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 			cc->rescan = true;
 		}
 
-		switch (isolate_migratepages(cc->zone, cc)) {
+        im_ret = isolate_migratepages(cc->zone, cc);
+
+        // Insert spurious failure here to treat success as an abort.
+        if (compact_spurious_fail_mode == SPURIOUS_FAIL_ISOLATE) {
+            if (im_ret == ISOLATE_SUCCESS) {
+                im_ret = ISOLATE_ABORT;
+            }
+        }
+
+		switch (im_ret) {
 		case ISOLATE_ABORT:
 			ret = COMPACT_CONTENDED;
 			putback_movable_pages(&cc->migratepages);
@@ -2181,6 +2580,13 @@ compact_zone(struct compact_control *cc, struct capture_control *capc)
 		err = migrate_pages(&cc->migratepages, compaction_alloc,
 				compaction_free, (unsigned long)cc, cc->mode,
 				MR_COMPACTION);
+
+        // Insert spurious failure here to treat success as abort.
+        if (compact_spurious_fail_mode == SPURIOUS_FAIL_MIGRATE) {
+            if (!err) {
+                err = -EAGAIN;
+            }
+        }
 
 		trace_mm_compaction_migratepages(cc->nr_migratepages, err,
 							&cc->migratepages);
@@ -2732,6 +3138,9 @@ static int __init kcompactd_init(void)
 
 	for_each_node_state(nid, N_MEMORY)
 		kcompactd_run(nid);
+
+    compact_instrumentation_init();
+
 	return 0;
 }
 subsys_initcall(kcompactd_init)
