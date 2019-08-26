@@ -54,6 +54,7 @@
 #include <linux/pvclock_gtod.h>
 #include <linux/kvm_irqfd.h>
 #include <linux/irqbypass.h>
+#include <linux/proc_fs.h>
 #include <trace/events/kvm.h>
 
 #define CREATE_TRACE_POINTS
@@ -61,6 +62,7 @@
 
 #include <asm/debugreg.h>
 #include <asm/msr.h>
+#include <asm/delay.h>
 #include <asm/desc.h>
 #include <asm/mce.h>
 #include <linux/kernel_stat.h>
@@ -68,6 +70,156 @@
 #include <asm/pvclock.h>
 #include <asm/div64.h>
 #include <asm/irq_remapping.h>
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+
+#define ZEROSIM_YIELD 0
+
+static unsigned long zerosim_d = 0;
+static unsigned long zerosim_delta = ZEROSIM_YIELD;
+
+static struct proc_dir_entry *zerosim_d_ent;
+static struct proc_dir_entry *zerosim_delta_ent;
+
+#define INSTR_BUFSIZE 256
+
+static ssize_t zerosim_d_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%lu\n", zerosim_d);
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+static ssize_t zerosim_delta_read(
+        struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
+{
+    // Generate the output to this buffer then copy to user
+	char buf[INSTR_BUFSIZE];
+	int len=0;
+
+    // The user has to read the whole file in one shot
+	if(*ppos > 0)
+		return 0;
+
+    // Actually output data
+	len += sprintf(buf, "%lu\n", zerosim_delta);
+
+    // The user has to read the whole file in one shot
+	if(count < len)
+		return 0;
+
+    // copy output to user
+	if(copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+
+    // update position and return length
+	*ppos = len;
+	return len;
+}
+
+static ssize_t zerosim_d_write(
+        struct file *file, const char __user *ubuf, size_t len, loff_t *offset)
+{
+    int num;
+    unsigned long d;
+    char input[INSTR_BUFSIZE];
+
+    // Parse input
+    if(*offset > 0 || len > INSTR_BUFSIZE) {
+		return -EFAULT;
+    }
+
+	if(copy_from_user(input, ubuf, len)) {
+		return -EFAULT;
+    }
+
+	num = sscanf(input, "%lu", &d);
+	if(num != 1) {
+		return -EINVAL;
+    }
+
+    // Set mode
+    zerosim_d = d;
+
+    printk(KERN_WARNING "zerosim: d = %lu\n", zerosim_d);
+
+    return len;
+}
+
+static ssize_t zerosim_delta_write(
+        struct file *file, const char __user *ubuf, size_t len, loff_t *offset)
+{
+    int num;
+    unsigned long delta;
+    char input[INSTR_BUFSIZE];
+
+    // Parse input
+    if(*offset > 0 || len > INSTR_BUFSIZE) {
+		return -EFAULT;
+    }
+
+	if(copy_from_user(input, ubuf, len)) {
+		return -EFAULT;
+    }
+
+	num = sscanf(input, "%lu", &delta);
+	if(num != 1) {
+		return -EINVAL;
+    }
+
+    // Set mode
+    zerosim_delta = delta;
+
+    printk(KERN_WARNING "zerosim: delta = %lu\n", zerosim_delta);
+
+    return len;
+}
+
+static struct file_operations zerosim_d_ops =
+{
+    .write = zerosim_d_write,
+    .read = zerosim_d_read,
+};
+
+static struct file_operations zerosim_delta_ops =
+{
+    .write = zerosim_delta_write,
+    .read = zerosim_delta_read,
+};
+
+static int zerosim_instrumentation_init(void)
+{
+	zerosim_d_ent =
+        proc_create("zerosim_d", 0444, NULL, &zerosim_d_ops);
+	zerosim_delta_ent =
+        proc_create("zerosim_delta", 0444, NULL, &zerosim_delta_ops);
+
+    printk(KERN_WARNING "inited zerosim\n");
+
+	return 0;
+}
+
+#endif
 
 #define MAX_IO_MSRS 256
 #define KVM_MAX_MCE_BANKS 32
@@ -5813,6 +5965,8 @@ int kvm_arch_init(void *opaque)
 	pvclock_gtod_register_notifier(&pvclock_gtod_notifier);
 #endif
 
+    zerosim_instrumentation_init();
+
 	return 0;
 
 out_free_percpu:
@@ -6702,8 +6856,6 @@ static inline bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 
-#define BEHIND_THRESHOLD 10000000
-
 /*
  * If the vcpu's virtual time is ahead of other vcpu's virtual time (i.e. it's
  * clock is running to fast), returns the difference in clocks. Otherwise,
@@ -6747,9 +6899,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     }
 
     // If the most "behind" vcpu is not that far behind, we don't care too much.
-    // TODO: maybe we want some more fine grained control here? Rather than just
-    // yielding the processor.
-    if (min_tsc < (local_tsc - BEHIND_THRESHOLD)) {
+    if (min_tsc < (local_tsc - zerosim_d)) {
         printk(KERN_WARNING "Stalling vcpu %d on cpu %d\n", vcpu->vcpu_id, vcpu->cpu);
         return local_tsc - min_tsc;
     } else {
@@ -6801,14 +6951,31 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
         // down this vcpu. Slowing down the vcpu is necessary whenever it
         // gets too far ahead of other vcpus.
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-		while (need_resched() || vcpu_is_ahead(vcpu)) {
+		while (true) {
+            if (need_resched()) {
+                srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
+                cond_resched();
+                vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
+            }
+
+            if (vcpu_is_ahead(vcpu)) {
+                if (zerosim_delta == ZEROSIM_YIELD) {
+                    srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
+                    cond_resched();
+                    vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
+                } else {
+                    // delay by delta
+                    udelay(zerosim_delta);
+                }
+            }
+		}
 #else
 		while (need_resched()) {
-#endif
 			srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
 			cond_resched();
 			vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
 		}
+#endif
 	}
 
 	srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
