@@ -73,13 +73,19 @@ static struct proc_dir_entry *swap_instrumentation_ent = NULL;
 // Time elapsed during _idle_ reclamation since boot.
 static atomic64_t swap_instr_idle_time_elapsed = ATOMIC64_INIT(0);
 
+// Number of times _idle_ reclamation was invoked since boot.
+static atomic64_t swap_instr_idle_count = ATOMIC64_INIT(0);
+
 // Number of pages scanned since boot during idle reclamation.
 static atomic64_t swap_instr_idle_pages_scanned = ATOMIC64_INIT(0);
 
 // Number of pages reclaimed since boot during idle reclamation.
 static atomic64_t swap_instr_idle_pages_reclaimed = ATOMIC64_INIT(0);
 
-// Time elapsed during _direct_ reclamation since boot. TODO
+// Number of times _direct_ reclamation was invoked since boot.
+static atomic64_t swap_instr_direct_count = ATOMIC64_INIT(0);
+
+// Time elapsed during _direct_ reclamation since boot.
 static atomic64_t swap_instr_direct_time_elapsed = ATOMIC64_INIT(0);
 
 // Number of pages scanned since boot during direct reclamation.
@@ -103,10 +109,12 @@ static ssize_t swap_instrumentation_read(
 		return 0;
 
     // Actually output data
-	len += sprintf(buf, "%llu %llu %llu %llu %llu %llu\n",
+	len += sprintf(buf, "%llu %llu %llu %llu %llu %llu %llu %llu\n",
+            (u64)atomic64_read(&swap_instr_idle_count),
             (u64)atomic64_read(&swap_instr_idle_time_elapsed),
             (u64)atomic64_read(&swap_instr_idle_pages_scanned),
             (u64)atomic64_read(&swap_instr_idle_pages_reclaimed),
+            (u64)atomic64_read(&swap_instr_direct_count),
             (u64)atomic64_read(&swap_instr_direct_time_elapsed),
             (u64)atomic64_read(&swap_instr_direct_pages_scanned),
             (u64)atomic64_read(&swap_instr_direct_pages_reclaimed));
@@ -3082,6 +3090,8 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 	struct zone *zone;
     unsigned long long start_time = rdtsc();
 
+    atomic64_add(1, &swap_instr_direct_count);
+
 retry:
 	delayacct_freepages_start();
 
@@ -3550,6 +3560,8 @@ static bool kswapd_shrink_node(pg_data_t *pgdat,
 	struct zone *zone;
 	int z;
     unsigned long old_scanned, old_reclaimed;
+
+    atomic64_add(1, &swap_instr_idle_count);
 
 	/* Reclaim a number of pages proportional to the number of zones */
 	sc->nr_to_reclaim = 0;
