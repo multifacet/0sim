@@ -1266,6 +1266,10 @@ static void start_apic_timer(struct kvm_lapic *apic)
 	atomic_set(&apic->lapic_timer.pending, 0);
 
 	if (apic_lvtt_period(apic) || apic_lvtt_oneshot(apic)) {
+		struct kvm_vcpu *vcpu = apic->vcpu;
+		unsigned long this_tsc_khz = vcpu->arch.virtual_tsc_khz;
+        u64 guest_tscdeadline;
+
 		/* lapic timer in oneshot or periodic mode */
 		now = apic->lapic_timer.timer.base->get_time();
 		apic->lapic_timer.period = (u64)kvm_apic_get_reg(apic, APIC_TMICT)
@@ -1290,6 +1294,13 @@ static void start_apic_timer(struct kvm_lapic *apic)
 				apic->lapic_timer.period = min_period;
 			}
 		}
+
+        // Compute the target guest tsc and store with the timer.
+        guest_tscdeadline = apic->lapic_timer.period;
+        do_div(guest_tscdeadline, 1000000ULL);
+        guest_tscdeadline *= this_tsc_khz;
+        guest_tscdeadline += kvm_read_l1_tsc(vcpu, rdtsc());
+        apic->lapic_timer.guest_tscdeadline = guest_tscdeadline;
 
 		hrtimer_start(&apic->lapic_timer.timer,
 			      ktime_add_ns(now, apic->lapic_timer.period),
@@ -1325,6 +1336,10 @@ static void start_apic_timer(struct kvm_lapic *apic)
 			do_div(ns, this_tsc_khz);
 			expire = ktime_add_ns(now, ns);
 			expire = ktime_sub_ns(expire, lapic_timer_advance_ns);
+
+            // Store the guest TSC deadline with the timer.
+            apic->lapic_timer.guest_tscdeadline = tscdeadline;
+
 			hrtimer_start(&apic->lapic_timer.timer,
 				      expire, HRTIMER_MODE_ABS);
 		} else
@@ -1768,6 +1783,18 @@ static enum hrtimer_restart apic_timer_fn(struct hrtimer *data)
 {
 	struct kvm_timer *ktimer = container_of(data, struct kvm_timer, timer);
 	struct kvm_lapic *apic = container_of(ktimer, struct kvm_lapic, lapic_timer);
+    struct kvm_vcpu *vcpu = apic->vcpu;
+    u64 guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
+    unsigned long this_tsc_khz = vcpu->arch.virtual_tsc_khz;
+
+    // Check here if we actually expired all of the guest time. Add time to
+    // the timer and restart it if not (i.e. keep waiting).
+    if (guest_tsc < ktimer->guest_tscdeadline) {
+        u64 difference_ns = (ktimer->guest_tscdeadline - guest_tsc) * 1000000ULL;
+        do_div(difference_ns, this_tsc_khz);
+		hrtimer_add_expires_ns(&ktimer->timer, difference_ns);
+        return HRTIMER_RESTART;
+    }
 
 	apic_timer_expired(apic);
 
