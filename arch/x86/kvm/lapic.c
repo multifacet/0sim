@@ -1266,9 +1266,11 @@ static void start_apic_timer(struct kvm_lapic *apic)
 	atomic_set(&apic->lapic_timer.pending, 0);
 
 	if (apic_lvtt_period(apic) || apic_lvtt_oneshot(apic)) {
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 		struct kvm_vcpu *vcpu = apic->vcpu;
 		unsigned long this_tsc_khz = vcpu->arch.virtual_tsc_khz;
         u64 guest_tscdeadline;
+#endif
 
 		/* lapic timer in oneshot or periodic mode */
 		now = apic->lapic_timer.timer.base->get_time();
@@ -1295,12 +1297,14 @@ static void start_apic_timer(struct kvm_lapic *apic)
 			}
 		}
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
         // Compute the target guest tsc and store with the timer.
         guest_tscdeadline = apic->lapic_timer.period;
         do_div(guest_tscdeadline, 1000000ULL);
         guest_tscdeadline *= this_tsc_khz;
         guest_tscdeadline += kvm_read_l1_tsc(vcpu, rdtsc());
         apic->lapic_timer.guest_tscdeadline = guest_tscdeadline;
+#endif
 
 		hrtimer_start(&apic->lapic_timer.timer,
 			      ktime_add_ns(now, apic->lapic_timer.period),
@@ -1337,8 +1341,10 @@ static void start_apic_timer(struct kvm_lapic *apic)
 			expire = ktime_add_ns(now, ns);
 			expire = ktime_sub_ns(expire, lapic_timer_advance_ns);
 
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
             // Store the guest TSC deadline with the timer.
             apic->lapic_timer.guest_tscdeadline = tscdeadline;
+#endif
 
 			hrtimer_start(&apic->lapic_timer.timer,
 				      expire, HRTIMER_MODE_ABS);
@@ -1783,6 +1789,8 @@ static enum hrtimer_restart apic_timer_fn(struct hrtimer *data)
 {
 	struct kvm_timer *ktimer = container_of(data, struct kvm_timer, timer);
 	struct kvm_lapic *apic = container_of(ktimer, struct kvm_lapic, lapic_timer);
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
     struct kvm_vcpu *vcpu = apic->vcpu;
     u64 guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
     unsigned long this_tsc_khz = vcpu->arch.virtual_tsc_khz;
@@ -1795,6 +1803,7 @@ static enum hrtimer_restart apic_timer_fn(struct hrtimer *data)
 		hrtimer_add_expires_ns(&ktimer->timer, difference_ns);
         return HRTIMER_RESTART;
     }
+#endif
 
 	apic_timer_expired(apic);
 
