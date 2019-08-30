@@ -5994,6 +5994,10 @@ void kvm_arch_exit(void)
 int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.halt_exits;
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    // (markm) Turn halt into nop.
+    return 1;
+#else
 	if (lapic_in_kernel(vcpu)) {
 		vcpu->arch.mp_state = KVM_MP_STATE_HALTED;
 		return 1;
@@ -6001,6 +6005,7 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 		vcpu->run->exit_reason = KVM_EXIT_HLT;
 		return 0;
 	}
+#endif
 }
 EXPORT_SYMBOL_GPL(kvm_vcpu_halt);
 
