@@ -74,8 +74,9 @@
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 
 #define ZEROSIM_YIELD 0
+#define ZEROSIM_D_DEFAULT 10000000UL
 
-static unsigned long zerosim_d = 0;
+static unsigned long zerosim_d = ZEROSIM_D_DEFAULT;
 static unsigned long zerosim_delta = ZEROSIM_YIELD;
 
 static struct proc_dir_entry *zerosim_d_ent;
