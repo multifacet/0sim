@@ -6962,9 +6962,7 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
                 srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
                 cond_resched();
                 vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
-            }
-
-            if (vcpu_is_ahead(vcpu)) {
+            } else if (vcpu_is_ahead(vcpu)) {
                 if (zerosim_delta == ZEROSIM_YIELD) {
                     srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
                     cond_resched();
@@ -6973,6 +6971,8 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
                     // delay by delta
                     udelay(zerosim_delta);
                 }
+            } else {
+                break;
             }
 		}
 #else
