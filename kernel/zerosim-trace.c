@@ -502,7 +502,7 @@ void zerosim_trace_vm_delay_begin(int vcpu_id, unsigned long behind)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = 0,
+        .id = vcpu_id,
         .flags = ZEROSIM_TRACE_VMDELAY | ZEROSIM_TRACE_START,
         .pid = (u32) current->pid,
         .extra = behind,
@@ -516,7 +516,7 @@ void zerosim_trace_vm_delay_end(int vcpu_id)
 {
     struct trace tr = {
         .timestamp = rdtsc(),
-        .id = 0,
+        .id = vcpu_id,
         .flags = ZEROSIM_TRACE_VMDELAY,
         .pid = (u32) current->pid,
         .extra = 0,
