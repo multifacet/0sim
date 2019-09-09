@@ -68,4 +68,14 @@ void zerosim_trace_vm_enter(int vcpu_id);
  */
 void zerosim_trace_vm_exit(unsigned long reason, unsigned long qual);
 
+/*
+ * Trace from VM delay begin.
+ */
+void zerosim_trace_vm_delay_begin(int vcpu_id, unsigned long behind);
+
+/*
+ * Trace from VM delay end.
+ */
+void zerosim_trace_vm_delay_end(int vcpu_id);
+
 #endif

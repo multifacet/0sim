@@ -26,6 +26,7 @@
 #define ZEROSIM_TRACE_SYSCALL       (0x00000004)
 #define ZEROSIM_TRACE_SOFTIRQ       (0x00000005)
 #define ZEROSIM_TRACE_VMENTEREXIT   (0x00000006)
+#define ZEROSIM_TRACE_VMDELAY       (0x00000007)
 
 // Set if this event is a start. Not set if end or N/A.
 #define ZEROSIM_TRACE_START         (0x80000000)
@@ -496,3 +497,31 @@ void zerosim_trace_vm_exit(unsigned long reason, unsigned long qual)
     zerosim_trace_event(&tr);
 }
 EXPORT_SYMBOL(zerosim_trace_vm_exit);
+
+void zerosim_trace_vm_delay_begin(int vcpu_id, unsigned long behind)
+{
+    struct trace tr = {
+        .timestamp = rdtsc(),
+        .id = 0,
+        .flags = ZEROSIM_TRACE_VMDELAY | ZEROSIM_TRACE_START,
+        .pid = (u32) current->pid,
+        .extra = behind,
+    };
+
+    zerosim_trace_event(&tr);
+}
+EXPORT_SYMBOL(zerosim_trace_vm_delay_begin);
+
+void zerosim_trace_vm_delay_end(int vcpu_id)
+{
+    struct trace tr = {
+        .timestamp = rdtsc(),
+        .id = 0,
+        .flags = ZEROSIM_TRACE_VMDELAY,
+        .pid = (u32) current->pid,
+        .extra = 0,
+    };
+
+    zerosim_trace_event(&tr);
+}
+EXPORT_SYMBOL(zerosim_trace_vm_delay_end);
