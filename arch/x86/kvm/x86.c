@@ -74,16 +74,75 @@
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 
+#define INSTR_BUFSIZE 256
+
+#define ZEROSIM_PROC_CREATE(type, name, default_val, fmt) \
+    static type name = default_val; \
+    static struct proc_dir_entry *name##_ent; \
+    \
+    static ssize_t name##_read_cb( \
+            struct file *file, char __user *ubuf,size_t count, loff_t *ppos) \
+    { \
+        char buf[INSTR_BUFSIZE]; \
+        int len=0; \
+ \
+        if(*ppos > 0) \
+            return 0; \
+ \
+        len += sprintf(buf, fmt "\n", name); \
+ \
+        if(count < len) \
+            return 0; \
+ \
+        if(copy_to_user(ubuf, buf, len)) \
+            return -EFAULT; \
+ \
+        *ppos = len; \
+        return len; \
+    } \
+    \
+    static ssize_t name##_write_cb( \
+            struct file *file, const char __user *ubuf, size_t len, loff_t *offset) \
+    { \
+        int num; \
+        type val; \
+        char input[INSTR_BUFSIZE]; \
+ \
+        if(*offset > 0 || len > INSTR_BUFSIZE) { \
+            return -EFAULT; \
+        } \
+ \
+        if(copy_from_user(input, ubuf, len)) { \
+            return -EFAULT; \
+        } \
+ \
+        num = sscanf(input, fmt, &val); \
+        if(num != 1) { \
+            return -EINVAL; \
+        } \
+ \
+        name = val; \
+ \
+        printk(KERN_WARNING "zerosim: %s = " fmt "\n", #name, name); \
+ \
+        return len; \
+    } \
+    \
+    static struct file_operations name##_ops = \
+    { \
+        .write = name##_write_cb, \
+        .read = name##_read_cb, \
+    };
+
 #define ZEROSIM_YIELD 0
 #define ZEROSIM_D_DEFAULT 10000000UL
 
+/*
 static unsigned long zerosim_d = ZEROSIM_D_DEFAULT;
 static unsigned long zerosim_delta = ZEROSIM_YIELD;
 
 static struct proc_dir_entry *zerosim_d_ent;
 static struct proc_dir_entry *zerosim_delta_ent;
-
-#define INSTR_BUFSIZE 256
 
 static ssize_t zerosim_d_read(
         struct file *file, char __user *ubuf,size_t count, loff_t *ppos)
@@ -208,6 +267,11 @@ static struct file_operations zerosim_delta_ops =
     .write = zerosim_delta_write,
     .read = zerosim_delta_read,
 };
+*/
+
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_d, ZEROSIM_D_DEFAULT, "%lu");
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_delta, ZEROSIM_YIELD, "%lu");
+ZEROSIM_PROC_CREATE(int, zerosim_skip_halt, false, "%d");
 
 static int zerosim_instrumentation_init(void)
 {
