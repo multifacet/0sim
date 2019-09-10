@@ -279,6 +279,8 @@ static int zerosim_instrumentation_init(void)
         proc_create("zerosim_d", 0444, NULL, &zerosim_d_ops);
 	zerosim_delta_ent =
         proc_create("zerosim_delta", 0444, NULL, &zerosim_delta_ops);
+	zerosim_skip_halt_ent =
+        proc_create("zerosim_skip_halt", 0444, NULL, &zerosim_skip_halt_ops);
 
     printk(KERN_WARNING "inited zerosim\n");
 
@@ -6061,9 +6063,11 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.halt_exits;
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-    // (markm) Turn halt into nop.
-    return 1;
-#else
+    if (zerosim_skip_halt) {
+        // (markm) Turn halt into nop.
+        return 1;
+    }
+#endif
 	if (lapic_in_kernel(vcpu)) {
 		vcpu->arch.mp_state = KVM_MP_STATE_HALTED;
 		return 1;
@@ -6071,7 +6075,6 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 		vcpu->run->exit_reason = KVM_EXIT_HLT;
 		return 0;
 	}
-#endif
 }
 EXPORT_SYMBOL_GPL(kvm_vcpu_halt);
 
@@ -7029,7 +7032,7 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
                 srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
                 cond_resched();
                 vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
-            } else if (behind = vcpu_is_ahead(vcpu)) {
+            } else if ((behind = vcpu_is_ahead(vcpu))) {
                 zerosim_trace_vm_delay_begin(vcpu->vcpu_id, behind);
                 if (zerosim_delta == ZEROSIM_YIELD) {
                     srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
