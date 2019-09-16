@@ -41,6 +41,7 @@
 #include "trace.h"
 #include "x86.h"
 #include "cpuid.h"
+#include <linux/zerosim-params.h>
 
 #ifndef CONFIG_X86_64
 #define mod_64(x, y) ((x) - (y) * div64_u64(x, y))
@@ -74,6 +75,22 @@
 
 #define VEC_POS(v) ((v) & (32 - 1))
 #define REG_POS(v) (((v) >> 5) << 4)
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+
+ZEROSIM_PROC_CREATE(int, zerosim_lapic_adjust, false, "%d");
+
+static int zerosim_instrumentation_init(void)
+{
+	zerosim_lapic_adjust_ent =
+        proc_create("zerosim_lapic_adjust", 0444, NULL, &zerosim_lapic_adjust_ops);
+
+    printk(KERN_WARNING "inited zerosim LAPIC\n");
+
+	return 0;
+}
+
+#endif
 
 static inline void apic_set_reg(struct kvm_lapic *apic, int reg_off, u32 val)
 {
@@ -2223,4 +2240,8 @@ void kvm_lapic_init(void)
 	/* do not patch jump label more than once per second */
 	jump_label_rate_limit(&apic_hw_disabled, HZ);
 	jump_label_rate_limit(&apic_sw_disabled, HZ);
+
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    zerosim_instrumentation_init();
+#endif
 }
