@@ -1808,17 +1808,19 @@ static enum hrtimer_restart apic_timer_fn(struct hrtimer *data)
 	struct kvm_lapic *apic = container_of(ktimer, struct kvm_lapic, lapic_timer);
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-    struct kvm_vcpu *vcpu = apic->vcpu;
-    u64 guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
-    unsigned long this_tsc_khz = vcpu->arch.virtual_tsc_khz;
+    if (zerosim_lapic_adjust) {
+        struct kvm_vcpu *vcpu = apic->vcpu;
+        u64 guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
+        unsigned long this_tsc_khz = vcpu->arch.virtual_tsc_khz;
 
-    // Check here if we actually expired all of the guest time. Add time to
-    // the timer and restart it if not (i.e. keep waiting).
-    if (guest_tsc < ktimer->guest_tscdeadline) {
-        u64 difference_ns = (ktimer->guest_tscdeadline - guest_tsc) * 1000000ULL;
-        do_div(difference_ns, this_tsc_khz);
-		hrtimer_add_expires_ns(&ktimer->timer, difference_ns);
-        return HRTIMER_RESTART;
+        // Check here if we actually expired all of the guest time. Add time to
+        // the timer and restart it if not (i.e. keep waiting).
+        if (guest_tsc < ktimer->guest_tscdeadline) {
+            u64 difference_ns = (ktimer->guest_tscdeadline - guest_tsc) * 1000000ULL;
+            do_div(difference_ns, this_tsc_khz);
+            hrtimer_add_expires_ns(&ktimer->timer, difference_ns);
+            return HRTIMER_RESTART;
+        }
     }
 #endif
 
