@@ -85,9 +85,9 @@ ZEROSIM_PROC_CREATE(int, zerosim_skip_halt, false, "%d");
 static int zerosim_instrumentation_init(void)
 {
 	zerosim_d_ent =
-        proc_create("zerosim_d", 0444, NULL, &zerosim_d_ops);
+        proc_create("zerosim_drift_threshold", 0444, NULL, &zerosim_d_ops);
 	zerosim_delta_ent =
-        proc_create("zerosim_delta", 0444, NULL, &zerosim_delta_ops);
+        proc_create("zerosim_delay", 0444, NULL, &zerosim_delta_ops);
 	zerosim_skip_halt_ent =
         proc_create("zerosim_skip_halt", 0444, NULL, &zerosim_skip_halt_ops);
 
