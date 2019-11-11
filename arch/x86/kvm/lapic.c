@@ -78,7 +78,7 @@
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 
-ZEROSIM_PROC_CREATE(int, zerosim_lapic_adjust, false, "%d");
+ZEROSIM_PROC_CREATE(int, zerosim_lapic_adjust, true, "%d");
 
 static int zerosim_instrumentation_init(void)
 {
