@@ -1,3 +1,11 @@
+# A quick note
+
+While 0sim can be used directly from this repo, it is much more ergonomic to
+use the tooling we built around it. If you are looking for usage instructions,
+please see the [0sim-workspace][wkspc] README.
+
+[wkspc]: https://github.com/multifacet/0sim-workspace
+
 # 0sim Usage Guide
 
 **NOTE: This is the 0sim users guide. To see the original Linux kernel README,
@@ -180,6 +188,28 @@ gather.
 I recommend that your workload should print measurements to stdout. You can
 then redirect this output somewhere else. In particular, I recommend redirecting
 output to a file on one of the shared directories you create through Vagrant.
+
+### Tunables
+
+There are a bunch of tunables that modify 0sim behavior. Update these values by
+writing to the appropriate file. You need sudo to do so.
+
+- `/proc/zerosim_lapic_adjust` [default: on]: should 0sim adjust LAPIC interrupt delivery.
+- `/proc/zerosim_drift_threshold` [default: 10000]: The default drift threshold for multi-core TSC offsetting (see paper).
+- `/proc/zerosim_delay` [default: 10000]: The default time by which vCPUs are
+  delayed (see paper). A value of 0 means that 0sim will just yield the
+  remainder of the scheduler quantum.
+- `/proc/zerosim_skip_halt` [default: off]: Skip `hlt` instructions. You almost certainly don't want this.
+
+- `/sys/module/ssdswap/device`[default: none]: used to make the system think a
+  single block device is non-rotational. This can be useful when backing zswap
+  with a hard drive, as the default swap-slot allocation policy is expensive.
+  This is a bit buggy though.
+
+- `/sys/module/kvm_intel/parameters/enable_tsc_offsetting` [default: on]: Turn on TSC offsetting.
+
+- `/sys/module/kvm_intel/parameters/ept` [default: on if supported]: Turn on Intel EPT (nested paging).
+    - You probably need to modify this when mounting the `kvm_intel` kernel module.
 
 ### Caveats
 
