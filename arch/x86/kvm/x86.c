@@ -75,11 +75,13 @@
 
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 
-#define ZEROSIM_YIELD 0
-#define ZEROSIM_D_DEFAULT 10000000UL
+#define ZEROSIM_YIELD       0
 
-ZEROSIM_PROC_CREATE(unsigned long, zerosim_d, ZEROSIM_D_DEFAULT, "%lu");
-ZEROSIM_PROC_CREATE(unsigned long, zerosim_delta, ZEROSIM_YIELD, "%lu");
+#define ZEROSIM_DELAY_DEFAULT       10000UL
+#define ZEROSIM_THRESHOLD_DEFAULT   10000UL
+
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_d, ZEROSIM_THRESHOLD_DEFAULT, "%lu");
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_delta, ZEROSIM_DELAY_DEFAULT, "%lu");
 ZEROSIM_PROC_CREATE(int, zerosim_skip_halt, false, "%d");
 
 static int zerosim_instrumentation_init(void)
