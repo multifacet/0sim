@@ -8621,7 +8621,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
         elapsed = rdtsc() - vcpu->start_missing;
         vmx_adjust_tsc_offset_guest_actually(vcpu, 
                 -elapsed-entry_exit_time-page_fault_time);
-        kvm_x86_elapse_time(elapsed);
+        kvm_x86_elapse_time(elapsed, vcpu->vcpu_id);
     }
 
 	atomic_switch_perf_msrs(vmx);

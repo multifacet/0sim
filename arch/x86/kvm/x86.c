@@ -93,6 +93,8 @@ static int zerosim_instrumentation_init(void)
 	zerosim_skip_halt_ent =
         proc_create("zerosim_skip_halt", 0444, NULL, &zerosim_skip_halt_ops);
 
+    zerosim_elapsed_init();
+
     printk(KERN_WARNING "inited zerosim\n");
 
 	return 0;
@@ -5946,8 +5948,8 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
     // Can use from any CPL
     switch (nr) {
     case KVM_HC_X86_HOST_ELAPSED:
-        elapsed = kvm_x86_get_time();
-        kvm_x86_reset_time();
+        elapsed = kvm_x86_get_time(vcpu->vcpu_id);
+        kvm_x86_reset_time(vcpu->vcpu_id);
 
         /*
          * Return the value of elapsed to userspace through RAX and RDX. Specifically,

@@ -392,8 +392,8 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		kvm_vcpu_on_spin(vcpu);
 		break;
     case HV_X64_HV_GET_HOST_ELAPSED:
-        elapsed = kvm_x86_get_time();
-        kvm_x86_reset_time();
+        elapsed = kvm_x86_get_time(vcpu->vcpu_id);
+        kvm_x86_reset_time(vcpu->vcpu_id);
 
         /* 
          * Return the value of elapsed to userspace through RAX and RDX. Specifically,
