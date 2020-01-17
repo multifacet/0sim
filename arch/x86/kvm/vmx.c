@@ -2505,6 +2505,7 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
 
         vmcs_write64(TSC_OFFSET, offset + adjustment);
         vcpu->tsc_offset = offset + adjustment;
+        vcpu->start_missing = 0;
         if (is_guest_mode(vcpu)) {
             /* Even when running L2, the adjustment needs to apply to L1 */
             to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
@@ -2514,6 +2515,17 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
     }
 #endif
 }
+
+static void vmx_force_tsc_offset_guest(struct kvm_vcpu *vcpu, u64 new_offset)
+{
+#ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    vmcs_write64(TSC_OFFSET, new_offset);
+    vcpu->tsc_offset = new_offset;
+    vcpu->start_missing = 0;
+#endif
+}
+
+
 
 static bool guest_cpuid_has_vmx(struct kvm_vcpu *vcpu)
 {
@@ -10952,7 +10964,7 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.read_tsc_offset = vmx_read_tsc_offset,
 	.write_tsc_offset = vmx_write_tsc_offset,
 	.adjust_tsc_offset_guest = vmx_adjust_tsc_offset_guest,
-	.adjust_tsc_offset_guest_actually = vmx_adjust_tsc_offset_guest_actually,
+	.force_tsc_offset_guest = vmx_force_tsc_offset_guest,
 	.read_l1_tsc = vmx_read_l1_tsc,
 
 	.set_tdp_cr3 = vmx_set_cr3,

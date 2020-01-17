@@ -76,6 +76,7 @@
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 
 #define ZEROSIM_YIELD       0
+#define ZEROSIM_ENOUGH      1
 
 #define ZEROSIM_DELAY_DEFAULT       10000UL
 #define ZEROSIM_THRESHOLD_DEFAULT   10000UL
@@ -83,7 +84,7 @@
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_d, ZEROSIM_THRESHOLD_DEFAULT, "%lu");
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_delta, ZEROSIM_DELAY_DEFAULT, "%lu");
 ZEROSIM_PROC_CREATE(int, zerosim_skip_halt, false, "%d");
-ZEROSIM_PROC_CREATE(int, zerosim_sync_guest_tsc, false, "%d");
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_sync_guest_tsc, false, "%lu");
 
 static int zerosim_instrumentation_init(void)
 {
@@ -102,6 +103,9 @@ static int zerosim_instrumentation_init(void)
 
 	return 0;
 }
+
+// Used as a barrier to sync guest TSCs.
+static atomic_t zerosim_sync_guest_barrier = ATOMIC_INIT(0);
 
 #endif
 
@@ -6777,6 +6781,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // The lowest tsc of any vcpu
     unsigned long long min_tsc = local_tsc;
     unsigned long long other_tsc;
+    int slowest_core = vcpu->vcpu_id;
 
     // If offsetting is not enabled
     if (!kvm_x86_ops->tsc_offsetting_enabled()) {
@@ -6798,49 +6803,49 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
 
         // Need to account for the possiblity that the other vcpu is stalled.
         if (other_vcpu->start_missing) { // start_missing == 0 when running.
-            other_tsc -= (host_local_tsc - other_vcpu->start_missing);
+            if (host_local_tsc > other_vcpu->start_missing) {
+                other_tsc -= (host_local_tsc - other_vcpu->start_missing);
+            }
         }
 
         if (other_tsc < min_tsc) {
             min_tsc = other_tsc;
+            slowest_core = i;
         }
     }
 
     // If the most "behind" vcpu is not that far behind, we don't care too much.
     if (min_tsc < (local_tsc - zerosim_d)) {
-        printk(KERN_WARNING "Stalling vcpu %d on cpu %d\n", vcpu->vcpu_id, vcpu->cpu);
+        printk(KERN_WARNING
+                "Stalling vcpu %d on cpu %d, waiting for vcpu %d, %llx, behind by %llu\n", 
+                vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc, local_tsc - min_tsc);
         return local_tsc - min_tsc;
     } else {
         return 0;
     }
 }
 
-// Synchronize this vCPU's TSC by fast-forwarding it to the most advance one.
-// Then, reset the flag.
+// Synchronize this vCPU's TSC by fast-forwarding it to the most advance one if
+// it is not ahead. Then, reset the flag.
 void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
 {
-    int i;
     int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
-    struct kvm_vcpu *other_vcpu;
 
-    // The offset of the highest guest TSC of any vcpu
-    unsigned long long max_tsc_offset = vcpu->tsc_offset;
+    unsigned long new_offset = zerosim_sync_guest_tsc;
 
-	for (i = 0; i < nvcpus; i++) {
-        // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
-        other_vcpu = vcpu->kvm->vcpus[i];
+    // Wait for everyone to reach the barrier.
+    atomic_inc(&zerosim_sync_guest_barrier);
+    while(atomic_read(&zerosim_sync_guest_barrier) < nvcpus) { }
 
-        if (other_vcpu->tsc_offset > max_tsc_offset) {
-            max_tsc_offset = other_vcpu->tsc_offset;
-        }
-    }
+    // Reset TSC forward to the max
+    kvm_x86_ops->force_tsc_offset_guest(vcpu, new_offset);
 
-    // Reset all TSCs forward to the max
-    kvm_x86_ops->adjust_tsc_offset_guest_actually(vcpu,
-            max_tsc_offset - vcpu->tsc_offset);
+    // Reset the barrier
+    atomic_set(&zerosim_sync_guest_barrier, 0);
+    zerosim_sync_guest_tsc = 0;
 
-    printk(KERN_WARNING "Synchronized guest %d TSC offset to %llu\n",
-            vcpu->vcpu_id, max_tsc_offset);
+    printk(KERN_WARNING "Synchronized guest TSC %d to 0x%ld\n",
+            vcpu->vcpu_id, new_offset);
 }
 
 #endif
@@ -6904,9 +6909,12 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
                     srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
                     cond_resched();
                     vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
+                } else if (zerosim_delta == ZEROSIM_ENOUGH) {
+                    // delay enough to catch up
+                    ndelay(behind);
                 } else {
                     // delay by delta
-                    udelay(zerosim_delta);
+                    ndelay(zerosim_delta);
                 }
                 zerosim_trace_vm_delay_end(vcpu->vcpu_id);
             } else {
