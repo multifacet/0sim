@@ -6760,26 +6760,44 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // This depends on the assumption that the host TSC's of all cpus are roughly
     // synchronized, which may or may not be true.
 
+    // TSC on `vcpu`
+    const unsigned long long host_local_tsc = rdtsc();
+
+    unsigned long long local_tsc = 
+        kvm_scale_tsc(vcpu, host_local_tsc) + vcpu->tsc_offset
+        - (host_local_tsc - vcpu->start_missing);
+
     int i;
+    int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+    struct kvm_vcpu *other_vcpu;
+
+    // The lowest tsc of any vcpu
+    unsigned long long min_tsc = local_tsc;
+    unsigned long long other_tsc;
 
     // If offsetting is not enabled
     if (!kvm_x86_ops->tsc_offsetting_enabled()) {
         return 0;
     }
 
-    // TSC on `vcpu`
-    const unsigned long long host_local_tsc = rdtsc();
-    const unsigned long long local_tsc = kvm_read_l1_tsc(vcpu, host_local_tsc);
-
-    // The lowest tsc of any vcpu
-    unsigned long long min_tsc = local_tsc;
-    unsigned long long other_tsc;
+    // If there is only 1 vCPU
+    if (nvcpus == 1) {
+        return 0;
+    }
 
     // We don't return immediately when we find the first "behind" vcpu.
     // Instead, we look for the _most_ "behind" vcpu so that we can judge how
     // long to wait.
-	for (i = 0; i < atomic_read(&vcpu->kvm->online_vcpus); i++) {
-        other_tsc = kvm_read_l1_tsc(vcpu->kvm->vcpus[i], host_local_tsc);
+	for (i = 0; i < nvcpus; i++) {
+        // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
+        other_vcpu = vcpu->kvm->vcpus[i];
+        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_vcpu->tsc_offset;
+
+        // Need to account for the possiblity that the other vcpu is stalled.
+        if (other_vcpu->start_missing) { // start_missing == 0 when running.
+            other_tsc -= (host_local_tsc - other_vcpu->start_missing);
+        }
+
         if (other_tsc < min_tsc) {
             min_tsc = other_tsc;
         }

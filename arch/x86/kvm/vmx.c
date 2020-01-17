@@ -2504,6 +2504,7 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
         offset = vmcs_read64(TSC_OFFSET);
 
         vmcs_write64(TSC_OFFSET, offset + adjustment);
+        vcpu->tsc_offset = offset + adjustment;
         if (is_guest_mode(vcpu)) {
             /* Even when running L2, the adjustment needs to apply to L1 */
             to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
@@ -8613,7 +8614,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
     // Actually offset guest TSC based on time up to now.
     // Assumes that the vcpu is pinned to a single host core.
-    if (vcpu->start_missing != 0) {
+    if (vcpu->start_missing != 0) { // only false the first time
         if (kvm_vcpu_get_and_reset_pf_flag(vcpu)) {
             page_fault_time = kvm_x86_get_page_fault_time();
         }
@@ -8622,6 +8623,9 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
         vmx_adjust_tsc_offset_guest_actually(vcpu, 
                 -elapsed-entry_exit_time-page_fault_time);
         kvm_x86_elapse_time(elapsed, vcpu->vcpu_id);
+
+        // Indicates that the vcpu is running.
+        vcpu->start_missing = 0;
     }
 
 	atomic_switch_perf_msrs(vmx);

@@ -286,6 +286,9 @@ struct kvm_vcpu {
     /* Start timestamp of TSC offsetting */
     unsigned long long start_missing;
 
+    /* TSC offset stored in VMCS. We store it here so it is accessible from other cores */
+    unsigned long long tsc_offset;
+
     /*
      * Set to true if we handled a page fault since the last reset.
      */
