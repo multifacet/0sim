@@ -83,6 +83,7 @@
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_d, ZEROSIM_THRESHOLD_DEFAULT, "%lu");
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_delta, ZEROSIM_DELAY_DEFAULT, "%lu");
 ZEROSIM_PROC_CREATE(int, zerosim_skip_halt, false, "%d");
+ZEROSIM_PROC_CREATE(int, zerosim_sync_guest_tsc, false, "%d");
 
 static int zerosim_instrumentation_init(void)
 {
@@ -92,6 +93,8 @@ static int zerosim_instrumentation_init(void)
         proc_create("zerosim_delay", 0444, NULL, &zerosim_delta_ops);
 	zerosim_skip_halt_ent =
         proc_create("zerosim_skip_halt", 0444, NULL, &zerosim_skip_halt_ops);
+	zerosim_sync_guest_tsc_ent =
+        proc_create("zerosim_sync_guest_tsc", 0444, NULL, &zerosim_sync_guest_tsc_ops);
 
     zerosim_elapsed_init();
 
@@ -6763,7 +6766,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // TSC on `vcpu`
     const unsigned long long host_local_tsc = rdtsc();
 
-    unsigned long long local_tsc = 
+    unsigned long long local_tsc =
         kvm_scale_tsc(vcpu, host_local_tsc) + vcpu->tsc_offset
         - (host_local_tsc - vcpu->start_missing);
 
@@ -6812,6 +6815,34 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     }
 }
 
+// Synchronize this vCPU's TSC by fast-forwarding it to the most advance one.
+// Then, reset the flag.
+void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
+{
+    int i;
+    int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+    struct kvm_vcpu *other_vcpu;
+
+    // The offset of the highest guest TSC of any vcpu
+    unsigned long long max_tsc_offset = vcpu->tsc_offset;
+
+	for (i = 0; i < nvcpus; i++) {
+        // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
+        other_vcpu = vcpu->kvm->vcpus[i];
+
+        if (other_vcpu->tsc_offset > max_tsc_offset) {
+            max_tsc_offset = other_vcpu->tsc_offset;
+        }
+    }
+
+    // Reset all TSCs forward to the max
+    kvm_x86_ops->adjust_tsc_offset_guest_actually(vcpu,
+            max_tsc_offset - vcpu->tsc_offset);
+
+    printk(KERN_WARNING "Synchronized guest %d TSC offset to %llu\n",
+            vcpu->vcpu_id, max_tsc_offset);
+}
+
 #endif
 
 static int vcpu_run(struct kvm_vcpu *vcpu)
@@ -6858,6 +6889,10 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
 		while (true) {
             unsigned long long behind;
+
+            if (zerosim_sync_guest_tsc) {
+                kvm_sync_guest_tsc(vcpu);
+            }
 
             if (need_resched()) {
                 srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);

@@ -10952,6 +10952,7 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.read_tsc_offset = vmx_read_tsc_offset,
 	.write_tsc_offset = vmx_write_tsc_offset,
 	.adjust_tsc_offset_guest = vmx_adjust_tsc_offset_guest,
+	.adjust_tsc_offset_guest_actually = vmx_adjust_tsc_offset_guest_actually,
 	.read_l1_tsc = vmx_read_l1_tsc,
 
 	.set_tdp_cr3 = vmx_set_cr3,
