@@ -6779,7 +6779,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     int slowest_core;
 
     // If offsetting is not enabled
-    if (!kvm_x86_ops->tsc_offsetting_enabled() || !zerosim_multicore_sync) {
+    if (!zerosim_multicore_sync || !kvm_x86_ops->tsc_offsetting_enabled()) {
         return 0;
     }
 

@@ -8635,9 +8635,6 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
         vmx_adjust_tsc_offset_guest_actually(vcpu, 
                 -elapsed-entry_exit_time-page_fault_time);
         kvm_x86_elapse_time(elapsed, vcpu->vcpu_id);
-
-        // Indicates that the vcpu is running.
-        vcpu->start_missing = 0;
     }
 
 	atomic_switch_perf_msrs(vmx);
