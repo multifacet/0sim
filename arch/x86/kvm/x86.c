@@ -84,6 +84,7 @@
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_d, ZEROSIM_THRESHOLD_DEFAULT, "%lu");
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_delta, ZEROSIM_DELAY_DEFAULT, "%lu");
 ZEROSIM_PROC_CREATE(int, zerosim_skip_halt, false, "%d");
+ZEROSIM_PROC_CREATE(unsigned long, zerosim_multicore_sync, false, "%lu");
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_sync_guest_tsc, false, "%lu");
 
 static int zerosim_instrumentation_init(void)
@@ -94,6 +95,8 @@ static int zerosim_instrumentation_init(void)
         proc_create("zerosim_delay", 0444, NULL, &zerosim_delta_ops);
 	zerosim_skip_halt_ent =
         proc_create("zerosim_skip_halt", 0444, NULL, &zerosim_skip_halt_ops);
+	zerosim_multicore_sync_ent =
+        proc_create("zerosim_multicore_sync", 0444, NULL, &zerosim_multicore_sync);
 	zerosim_sync_guest_tsc_ent =
         proc_create("zerosim_sync_guest_tsc", 0444, NULL, &zerosim_sync_guest_tsc_ops);
 
@@ -6784,7 +6787,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     int slowest_core = vcpu->vcpu_id;
 
     // If offsetting is not enabled
-    if (!kvm_x86_ops->tsc_offsetting_enabled()) {
+    if (!kvm_x86_ops->tsc_offsetting_enabled() || !zerosim_multicore_sync) {
         return 0;
     }
 
@@ -6817,7 +6820,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // If the most "behind" vcpu is not that far behind, we don't care too much.
     if (min_tsc < (local_tsc - zerosim_d)) {
         printk(KERN_WARNING
-                "Stalling vcpu %d on cpu %d, waiting for vcpu %d, %llx, behind by %llu\n", 
+                "Stalling vcpu %d on cpu %d, waiting for vcpu %d, %llx, behind by %llu\n",
                 vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc, local_tsc - min_tsc);
         return local_tsc - min_tsc;
     } else {
