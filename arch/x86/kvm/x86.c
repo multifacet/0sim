@@ -6770,31 +6770,34 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // This depends on the assumption that the host TSC's of all cpus are roughly
     // synchronized, which may or may not be true.
 
-    // TSC on `vcpu`
-    const unsigned long long host_local_tsc = rdtsc();
-
-    unsigned long long local_tsc =
-        kvm_scale_tsc(vcpu, host_local_tsc) + vcpu->tsc_offset
-        - (host_local_tsc - vcpu->start_missing);
-
-    int i;
-    int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+    unsigned long long host_local_tsc;
+    unsigned long long local_tsc;
+    int i, nvcpus;
     struct kvm_vcpu *other_vcpu;
-
-    // The lowest tsc of any vcpu
-    unsigned long long min_tsc = local_tsc;
+    unsigned long long min_tsc;
     unsigned long long other_tsc;
-    int slowest_core = vcpu->vcpu_id;
+    int slowest_core;
 
     // If offsetting is not enabled
     if (!kvm_x86_ops->tsc_offsetting_enabled() || !zerosim_multicore_sync) {
         return 0;
     }
 
+    nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+
     // If there is only 1 vCPU
     if (nvcpus == 1) {
         return 0;
     }
+
+    // TSC on this core and vcpu
+    host_local_tsc = rdtsc();
+    local_tsc = kvm_scale_tsc(vcpu, host_local_tsc) + vcpu->tsc_offset
+        - (host_local_tsc - vcpu->start_missing);
+
+    // The lowest tsc of any vcpu
+    min_tsc = local_tsc;
+    slowest_core = vcpu->vcpu_id;
 
     // We don't return immediately when we find the first "behind" vcpu.
     // Instead, we look for the _most_ "behind" vcpu so that we can judge how
