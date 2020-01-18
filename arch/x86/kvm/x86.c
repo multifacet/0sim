@@ -96,7 +96,7 @@ static int zerosim_instrumentation_init(void)
 	zerosim_skip_halt_ent =
         proc_create("zerosim_skip_halt", 0444, NULL, &zerosim_skip_halt_ops);
 	zerosim_multicore_sync_ent =
-        proc_create("zerosim_multicore_sync", 0444, NULL, &zerosim_multicore_sync);
+        proc_create("zerosim_multicore_sync", 0444, NULL, &zerosim_multicore_sync_ops);
 	zerosim_sync_guest_tsc_ent =
         proc_create("zerosim_sync_guest_tsc", 0444, NULL, &zerosim_sync_guest_tsc_ops);
 
