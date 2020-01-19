@@ -109,6 +109,7 @@ static int zerosim_instrumentation_init(void)
 
 // Used as a barrier to sync guest TSCs.
 static atomic_t zerosim_sync_guest_barrier = ATOMIC_INIT(0);
+static atomic_t zerosim_sync_guest_barrier2 = ATOMIC_INIT(0);
 
 #endif
 
@@ -6839,12 +6840,19 @@ void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
 
     unsigned long new_offset = zerosim_sync_guest_tsc;
 
+    // Reset the second barrier when know nobody needs it.
+    atomic_set(&zerosim_sync_guest_barrier2, 0);
+
     // Wait for everyone to reach the barrier.
     atomic_inc(&zerosim_sync_guest_barrier);
     while(atomic_read(&zerosim_sync_guest_barrier) < nvcpus) { }
 
     // Reset TSC forward to the max
     kvm_x86_ops->force_tsc_offset_guest(vcpu, new_offset);
+
+    // Wait for everyone to be done.
+    atomic_inc(&zerosim_sync_guest_barrier2);
+    while(atomic_read(&zerosim_sync_guest_barrier2) < nvcpus) { }
 
     // Reset the barrier
     atomic_set(&zerosim_sync_guest_barrier, 0);
