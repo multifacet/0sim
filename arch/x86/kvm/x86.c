@@ -6823,9 +6823,9 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
 
     // If the most "behind" vcpu is not that far behind, we don't care too much.
     if (min_tsc < (local_tsc - zerosim_d)) {
-        printk(KERN_WARNING
-                "Stalling vcpu %d on cpu %d, waiting for vcpu %d, %llx, behind by %llu\n",
-                vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc, local_tsc - min_tsc);
+        //printk(KERN_WARNING
+        //        "Stalling vcpu %d on cpu %d, waiting for vcpu %d, %llx, behind by %llu\n",
+        //        vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc, local_tsc - min_tsc);
         return local_tsc - min_tsc;
     } else {
         return 0;
