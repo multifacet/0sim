@@ -5887,9 +5887,14 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.halt_exits;
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-    if (zerosim_skip_halt) {
+    if (zerosim_skip_halt == 1) {
         // (markm) Turn halt into nop.
         return 1;
+    }
+
+    if (zerosim_skip_halt == 2) {
+        // (markm) Don't skip halt but only avoid pausing the TSC.
+        vcpu->start_missing = 0;
     }
 #endif
 	if (lapic_in_kernel(vcpu)) {
