@@ -6895,8 +6895,8 @@ void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
     atomic_set(&zerosim_sync_guest_barrier, 0);
     zerosim_sync_guest_tsc = 0;
 
-    printk(KERN_WARNING "Synchronized guest TSC %d to 0x%ld\n",
-            vcpu->vcpu_id, new_offset);
+    printk(KERN_WARNING "Synchronized guest TSC [%d / %d] to 0x%ld\n",
+            vcpu->vcpu_id, nvcpus, new_offset);
 }
 
 #endif
