@@ -5899,14 +5899,7 @@ s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
         other_vcpu = vcpu->kvm->vcpus[i];
         other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_vcpu->tsc_offset;
 
-        // Need to account for the possiblity that the other vcpu is stalled.
-        if (other_vcpu->start_missing) { // start_missing == 0 when running.
-            if (host_local_tsc > other_vcpu->start_missing) {
-                other_tsc -= (host_local_tsc - other_vcpu->start_missing);
-            }
-        }
-
-        if (other_tsc < max_tsc) {
+        if (other_tsc > max_tsc) {
             max_tsc = other_tsc;
         }
     }
