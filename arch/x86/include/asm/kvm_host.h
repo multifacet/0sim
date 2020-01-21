@@ -846,7 +846,6 @@ struct kvm_x86_ops {
 	bool (*rdtscp_supported)(void);
 	bool (*invpcid_supported)(void);
 	void (*adjust_tsc_offset_guest)(struct kvm_vcpu *vcpu, s64 adjustment);
-	void (*force_tsc_offset_guest)(struct kvm_vcpu *vcpu, u64 new_offset);
 
 	void (*set_tdp_cr3)(struct kvm_vcpu *vcpu, unsigned long cr3);
 

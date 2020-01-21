@@ -244,8 +244,7 @@ int kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	kvm_vcpu_set_dy_eligible(vcpu, false);
 	vcpu->preempted = false;
 
-    vcpu->start_missing = 0;
-    vcpu->handled_pf = 0;
+    init_zerosim_timing_ctrl(&vcpu->zerosim);
 
 	r = kvm_arch_vcpu_init(vcpu);
 	if (r < 0)

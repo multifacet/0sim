@@ -222,6 +222,34 @@ struct kvm_mmio_fragment {
 	unsigned len;
 };
 
+// Controls the behavior of 0sim timing features. There is one of these for
+// each vcpu, and it is kept in the `struct kvm_vcpu`.
+struct zerosim_timing_ctrl {
+    // The timestamp since the vcpu paused. This is used to update
+    // `tsc_offset` by taking the difference with a later timestamp.
+    //
+    // 0 means no update should be made to `tsc_offset`, so that the value of
+    // `tsc_offset` is loaded into the VMCS without changes. This could be
+    // because the vcpu is currently running.
+    unsigned long long start_missing;
+
+    // The TSC offset of the guest _that is too be loaded_ into the VMCS just
+    // before `vmenter`.
+    s64 tsc_offset;
+
+    /*
+     * Set to true if we handled a page fault since the last reset.
+     */
+    bool handled_pf;
+};
+
+static inline void init_zerosim_timing_ctrl(struct zerosim_timing_ctrl *ztc)
+{
+    ztc->handled_pf = 0;
+    ztc->start_missing = 0;
+    ztc->tsc_offset = 0;
+}
+
 struct kvm_vcpu {
 	struct kvm *kvm;
 #ifdef CONFIG_PREEMPT_NOTIFIERS
@@ -283,16 +311,7 @@ struct kvm_vcpu {
 	bool preempted;
 	struct kvm_vcpu_arch arch;
 
-    /* Start timestamp of TSC offsetting */
-    unsigned long long start_missing;
-
-    /* TSC offset stored in VMCS. We store it here so it is accessible from other cores */
-    unsigned long long tsc_offset;
-
-    /*
-     * Set to true if we handled a page fault since the last reset.
-     */
-    bool handled_pf;
+    struct zerosim_timing_ctrl zerosim;
 };
 
 /*
@@ -300,7 +319,7 @@ struct kvm_vcpu {
  */
 static inline void kvm_vcpu_set_pf_flag(struct kvm_vcpu *vcpu)
 {
-    vcpu->handled_pf = 1;
+    vcpu->zerosim.handled_pf = 1;
 }
 
 /*
@@ -309,9 +328,25 @@ static inline void kvm_vcpu_set_pf_flag(struct kvm_vcpu *vcpu)
  */
 static inline bool kvm_vcpu_get_and_reset_pf_flag(struct kvm_vcpu *vcpu)
 {
-    bool flag = vcpu->handled_pf;
-    vcpu->handled_pf = 0;
+    bool flag = vcpu->zerosim.handled_pf;
+    vcpu->zerosim.handled_pf = 0;
     return flag;
+}
+
+/*
+ * Returns the offset considering both the present offset and the start_missing
+ * time, but using this host processor's TSC for base time.
+ */
+static inline s64 kvm_vcpu_compute_effective_tsc_offset(struct kvm_vcpu *vcpu)
+{
+    unsigned long long now = rdtsc();
+    if (vcpu->zerosim.start_missing) { // start_missing == 0 when running.
+        if (now > vcpu->zerosim.start_missing) {
+            return vcpu->zerosim.tsc_offset - (now - vcpu->zerosim.start_missing);
+        }
+    }
+
+    return vcpu->zerosim.tsc_offset;
 }
 
 static inline int kvm_vcpu_exiting_guest_mode(struct kvm_vcpu *vcpu)

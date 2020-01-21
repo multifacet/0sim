@@ -2503,29 +2503,23 @@ static void vmx_adjust_tsc_offset_guest_actually(struct kvm_vcpu *vcpu, s64 adju
 
         offset = vmcs_read64(TSC_OFFSET);
 
-        vmcs_write64(TSC_OFFSET, offset + adjustment);
-        vcpu->tsc_offset = offset + adjustment;
-        vcpu->start_missing = 0;
-        if (is_guest_mode(vcpu)) {
-            /* Even when running L2, the adjustment needs to apply to L1 */
-            to_vmx(vcpu)->nested.vmcs01_tsc_offset += adjustment;
-        } else
-            trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset,
-                           offset + adjustment);
+        vcpu->zerosim.tsc_offset = offset + adjustment;
+
+        trace_kvm_write_tsc_offset(vcpu->vcpu_id, offset, offset + adjustment);
     }
 #endif
 }
 
-static void vmx_force_tsc_offset_guest(struct kvm_vcpu *vcpu, u64 new_offset)
+static void vmx_force_tsc_offset_guest(struct kvm_vcpu *vcpu)
 {
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-    vmcs_write64(TSC_OFFSET, new_offset);
-    vcpu->tsc_offset = new_offset;
-    vcpu->start_missing = 0;
+    if (enable_tsc_offsetting) {
+        vmcs_write64(TSC_OFFSET, vcpu->zerosim.tsc_offset);
+        zerosim_report_guest_offset(vcpu->vcpu_id, vcpu->zerosim.tsc_offset);
+        vcpu->zerosim.start_missing = 0;
+    }
 #endif
 }
-
-
 
 static bool guest_cpuid_has_vmx(struct kvm_vcpu *vcpu)
 {
@@ -8579,9 +8573,6 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long debugctlmsr, cr4;
-
-    unsigned long long page_fault_time = 0;
-    unsigned long long entry_exit_time;
     unsigned long long elapsed;
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
@@ -8626,18 +8617,21 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
     // Actually offset guest TSC based on time up to now.
     // Assumes that the vcpu is pinned to a single host core.
-    if (vcpu->start_missing == 1) {
-        vmx_force_tsc_offset_guest(vcpu, vcpu->tsc_offset);
-    } else if (vcpu->start_missing != 0) { // only false the first time
-        if (kvm_vcpu_get_and_reset_pf_flag(vcpu)) {
-            page_fault_time = kvm_x86_get_page_fault_time();
-        }
-        entry_exit_time = kvm_x86_get_entry_exit_time();
-        elapsed = rdtsc() - vcpu->start_missing;
-        vmx_adjust_tsc_offset_guest_actually(vcpu, 
-                -elapsed-entry_exit_time-page_fault_time);
-        kvm_x86_elapse_time(elapsed, vcpu->vcpu_id);
+    if (vcpu->zerosim.start_missing != 0) {
+        // Update the start_missing time to account for other sources of overhead.
+        vcpu->zerosim.start_missing -= kvm_vcpu_get_and_reset_pf_flag(vcpu) ?
+            kvm_x86_get_page_fault_time() : 0;
+        vcpu->zerosim.start_missing -= kvm_x86_get_entry_exit_time();
+
+        // Now compute the missing time and update the proposed `tsc_offset`.
+        elapsed = rdtsc() - vcpu->zerosim.start_missing;
+
+        // Adjust `tsc_offset` but don't actually write the VMCS.
+        vmx_adjust_tsc_offset_guest_actually(vcpu, -elapsed);
     }
+
+    // Update the TSC offset in the VMCS (if offsetting is enabled)
+    vmx_force_tsc_offset_guest(vcpu);
 
 	atomic_switch_perf_msrs(vmx);
 	debugctlmsr = get_debugctlmsr();
@@ -8765,7 +8759,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	loadsegment(es, __USER_DS);
 #endif
 
-    vcpu->start_missing = rdtsc();
+    vcpu->zerosim.start_missing = rdtsc();
 
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)
 				  | (1 << VCPU_EXREG_RFLAGS)
@@ -10963,7 +10957,6 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.read_tsc_offset = vmx_read_tsc_offset,
 	.write_tsc_offset = vmx_write_tsc_offset,
 	.adjust_tsc_offset_guest = vmx_adjust_tsc_offset_guest,
-	.force_tsc_offset_guest = vmx_force_tsc_offset_guest,
 	.read_l1_tsc = vmx_read_l1_tsc,
 
 	.set_tdp_cr3 = vmx_set_cr3,

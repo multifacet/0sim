@@ -5,12 +5,13 @@
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 
+///////////////////////////////////////////////////////////////////////////////
+// Mechanism for reporting the current offsets.
+
 // 16-digit hex + space
 #define ELAPSED_BUF_SIZE ((16 + 1) * KVM_MAX_VCPUS)
 
-static unsigned long long elapsed[KVM_MAX_VCPUS] = {};
-static unsigned long long entry_exit_time = 0;
-static unsigned long long page_fault_time = 0;
+static s64 guest_tsc_offsets[KVM_MAX_VCPUS] = {};
 
 // Define a procfs file to get the amount of time elapsed on each vcpu
 static struct proc_dir_entry *elapsed_ent;
@@ -28,12 +29,13 @@ static ssize_t elapsed_read_cb(
     // For each vcpu, print offset
     for (vcpu = 0; vcpu < KVM_MAX_VCPUS; ++vcpu) {
         if (len + 17 < ELAPSED_BUF_SIZE) {
-            len += sprintf(buf + len, "%llx ", kvm_x86_get_time(vcpu));
+            len += sprintf(buf + len, "%lld ", -guest_tsc_offsets[vcpu]);
         } else {
             printk(KERN_WARNING "out of space in elapsed_read_cb\n");
         }
     }
 
+    buf[len++] = '\n'; // new line
     buf[len] = 0; // null terminate
 
     if(count < len)
@@ -61,13 +63,17 @@ int zerosim_elapsed_init(void)
 	return 0;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-void kvm_x86_elapse_time(unsigned long long extra, int vcpu_id) {
-    elapsed[vcpu_id] += extra + entry_exit_time;
-    //printk(KERN_DEBUG "elapsed %llu\n", extra);
+// Set the current offset for the guest, so that it shows up in /proc/zerosim_guest_offset
+void zerosim_report_guest_offset(int vcpu_id, s64 new_offset) {
+    guest_tsc_offsets[vcpu_id] = new_offset;
 }
-EXPORT_SYMBOL(kvm_x86_elapse_time);
+EXPORT_SYMBOL(zerosim_report_guest_offset);
+
+////////////////////////////////////////////////////////////////////////////////
+// Mechanisms for tweaking the reported time.
+
+static unsigned long long entry_exit_time = 0;
+static unsigned long long page_fault_time = 0;
 
 void kvm_x86_set_entry_exit_time(int too_low) {
     if (too_low) {
@@ -93,15 +99,7 @@ unsigned long long kvm_x86_get_page_fault_time() {
 }
 EXPORT_SYMBOL(kvm_x86_get_page_fault_time);
 
-void kvm_x86_reset_time(int vcpu_id)
-{
-    elapsed[vcpu_id] = 0;
-    entry_exit_time = 0;
-    //printk(KERN_DEBUG "elapsed reset");
-}
-
 unsigned long long kvm_x86_get_time(int vcpu_id)
 {
-    //printk(KERN_DEBUG "get elapsed %llu\n", elapsed);
-    return elapsed[vcpu_id];
+    return (u64)(-guest_tsc_offsets[vcpu_id]);
 }

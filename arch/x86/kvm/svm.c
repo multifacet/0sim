@@ -4266,12 +4266,6 @@ static bool svm_tsc_offsetting_enabled(void) {
 }
 #endif
 
-static void svm_force_tsc_offset_guest(struct kvm_vcpu *vcpu, u64 new_offset)
-{
-    // Not implemented
-    BUG();
-}
-
 static struct kvm_x86_ops svm_x86_ops = {
 	.cpu_has_kvm_support = has_svm,
 	.disabled_by_bios = is_disabled,
@@ -4366,7 +4360,6 @@ static struct kvm_x86_ops svm_x86_ops = {
 	.read_tsc_offset = svm_read_tsc_offset,
 	.write_tsc_offset = svm_write_tsc_offset,
 	.adjust_tsc_offset_guest = svm_adjust_tsc_offset_guest,
-	.force_tsc_offset_guest = svm_force_tsc_offset_guest,
 	.read_l1_tsc = svm_read_l1_tsc,
 
 	.set_tdp_cr3 = set_tdp_cr3,

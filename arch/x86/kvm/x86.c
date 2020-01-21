@@ -109,7 +109,6 @@ static int zerosim_instrumentation_init(void)
 
 // Used as a barrier to sync guest TSCs.
 static atomic_t zerosim_sync_guest_barrier = ATOMIC_INIT(0);
-static atomic_t zerosim_sync_guest_barrier2 = ATOMIC_INIT(0);
 
 #endif
 
@@ -5897,7 +5896,8 @@ s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
 	for (i = 0; i < nvcpus; i++) {
         // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
         other_vcpu = vcpu->kvm->vcpus[i];
-        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_vcpu->tsc_offset;
+        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc)
+            + kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
 
         if (other_tsc > max_tsc) {
             max_tsc = other_tsc;
@@ -5918,8 +5918,8 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 
     if (zerosim_skip_halt == 2) {
         // (markm) Don't skip halt but only avoid pausing the TSC.
-        vcpu->tsc_offset = kvm_get_max_tsc_offset(vcpu);
-        vcpu->start_missing = 1;
+        vcpu->zerosim.tsc_offset = kvm_get_max_tsc_offset(vcpu);
+        vcpu->zerosim.start_missing = 0;
     }
 #endif
 	if (lapic_in_kernel(vcpu)) {
@@ -5990,7 +5990,6 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
     switch (nr) {
     case KVM_HC_X86_HOST_ELAPSED:
         elapsed = kvm_x86_get_time(vcpu->vcpu_id);
-        kvm_x86_reset_time(vcpu->vcpu_id);
 
         /*
          * Return the value of elapsed to userspace through RAX and RDX. Specifically,
@@ -6808,6 +6807,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     unsigned long long min_tsc;
     unsigned long long other_tsc;
     int slowest_core;
+    s64 other_tsc_offset;
 
     // If offsetting is not enabled
     if (!zerosim_multicore_sync || !kvm_x86_ops->tsc_offsetting_enabled()) {
@@ -6823,8 +6823,8 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
 
     // TSC on this core and vcpu
     host_local_tsc = rdtsc();
-    local_tsc = kvm_scale_tsc(vcpu, host_local_tsc) + vcpu->tsc_offset
-        - (host_local_tsc - vcpu->start_missing);
+    local_tsc = kvm_scale_tsc(vcpu, host_local_tsc)
+        + kvm_vcpu_compute_effective_tsc_offset(vcpu);
 
     // The lowest tsc of any vcpu
     min_tsc = local_tsc;
@@ -6836,14 +6836,8 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
 	for (i = 0; i < nvcpus; i++) {
         // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
         other_vcpu = vcpu->kvm->vcpus[i];
-        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_vcpu->tsc_offset;
-
-        // Need to account for the possiblity that the other vcpu is stalled.
-        if (other_vcpu->start_missing) { // start_missing == 0 when running.
-            if (host_local_tsc > other_vcpu->start_missing) {
-                other_tsc -= (host_local_tsc - other_vcpu->start_missing);
-            }
-        }
+        other_tsc_offset = kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
+        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_tsc_offset;
 
         if (other_tsc < min_tsc) {
             min_tsc = other_tsc;
@@ -6867,29 +6861,31 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
 void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
 {
     int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+    int i;
 
     unsigned long new_offset = zerosim_sync_guest_tsc;
-
-    // Reset the second barrier when know nobody needs it.
-    atomic_set(&zerosim_sync_guest_barrier2, 0);
 
     // Wait for everyone to reach the barrier.
     atomic_inc(&zerosim_sync_guest_barrier);
     while(atomic_read(&zerosim_sync_guest_barrier) < nvcpus) { }
 
-    // Reset TSC forward.
-    kvm_x86_ops->force_tsc_offset_guest(vcpu, new_offset);
+    // vCPU 0 will always be the one to go update the next tsc_offset for
+    // everyone. Then, they will all get updated just before vmentering.
+    if (vcpu->vcpu_id == 0) {
+        for (i = 0; i < nvcpus; ++i) {
+            vcpu->kvm->vcpus[i]->zerosim.tsc_offset = new_offset;
+            vcpu->kvm->vcpus[i]->zerosim.start_missing = 0;
+        }
 
-    // Wait for everyone to be done.
-    atomic_inc(&zerosim_sync_guest_barrier2);
-    while(atomic_read(&zerosim_sync_guest_barrier2) < nvcpus) { }
+        // Reset the barrier, allowing everyone to continue.
+        zerosim_sync_guest_tsc = 0;
+        atomic_set(&zerosim_sync_guest_barrier, 0);
+    } else {
+        // Wait for vCPU 0 to finish.
+        while(atomic_read(&zerosim_sync_guest_barrier)) { }
+    }
 
-    // Reset the barrier
-    atomic_set(&zerosim_sync_guest_barrier, 0);
-    zerosim_sync_guest_tsc = 0;
-
-    printk(KERN_WARNING "Synchronized guest TSC [%d / %d] to 0x%ld\n",
-            vcpu->vcpu_id, nvcpus, new_offset);
+    printk(KERN_WARNING "Synchronized guest TSCs to 0x%ld\n", new_offset);
 }
 
 #endif
