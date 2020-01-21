@@ -5883,6 +5883,34 @@ void kvm_arch_exit(void)
 	free_percpu(shared_msrs);
 }
 
+s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
+{
+    s64 max_tsc;
+    int i;
+    unsigned long long other_tsc;
+    struct kvm_vcpu *other_vcpu;
+    int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+
+	for (i = 0; i < nvcpus; i++) {
+        // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
+        other_vcpu = vcpu->kvm->vcpus[i];
+        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_vcpu->tsc_offset;
+
+        // Need to account for the possiblity that the other vcpu is stalled.
+        if (other_vcpu->start_missing) { // start_missing == 0 when running.
+            if (host_local_tsc > other_vcpu->start_missing) {
+                other_tsc -= (host_local_tsc - other_vcpu->start_missing);
+            }
+        }
+
+        if (other_tsc > max_tsc) {
+            max_tsc = other_tsc;
+        }
+    }
+
+    return max_tsc;
+}
+
 int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.halt_exits;
@@ -5894,7 +5922,8 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 
     if (zerosim_skip_halt == 2) {
         // (markm) Don't skip halt but only avoid pausing the TSC.
-        vcpu->start_missing = 0;
+        vcpu->tsc_offset = kvm_get_max_tsc_offset(vcpu);
+        vcpu->start_missing = 1;
     }
 #endif
 	if (lapic_in_kernel(vcpu)) {
@@ -6852,7 +6881,7 @@ void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
     atomic_inc(&zerosim_sync_guest_barrier);
     while(atomic_read(&zerosim_sync_guest_barrier) < nvcpus) { }
 
-    // Reset TSC forward to the max
+    // Reset TSC forward.
     kvm_x86_ops->force_tsc_offset_guest(vcpu, new_offset);
 
     // Wait for everyone to be done.

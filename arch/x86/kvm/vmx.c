@@ -8626,7 +8626,9 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
     // Actually offset guest TSC based on time up to now.
     // Assumes that the vcpu is pinned to a single host core.
-    if (vcpu->start_missing != 0) { // only false the first time
+    if (vcpu->start_missing == 1) {
+        vmx_force_tsc_offset_guest(vcpu, vcpu->tsc_offset);
+    } else if (vcpu->start_missing != 0) { // only false the first time
         if (kvm_vcpu_get_and_reset_pf_flag(vcpu)) {
             page_fault_time = kvm_x86_get_page_fault_time();
         }
