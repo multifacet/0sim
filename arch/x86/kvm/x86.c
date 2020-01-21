@@ -5906,7 +5906,7 @@ s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
             }
         }
 
-        if (other_tsc > max_tsc) {
+        if (other_tsc < max_tsc) {
             max_tsc = other_tsc;
         }
     }
