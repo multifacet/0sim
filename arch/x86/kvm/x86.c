@@ -6863,7 +6863,7 @@ void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
     int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
     int i;
 
-    unsigned long new_offset = zerosim_sync_guest_tsc;
+    s64 new_offset;
 
     // Wait for everyone to reach the barrier.
     atomic_inc(&zerosim_sync_guest_barrier);
@@ -6872,6 +6872,8 @@ void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
     // vCPU 0 will always be the one to go update the next tsc_offset for
     // everyone. Then, they will all get updated just before vmentering.
     if (vcpu->vcpu_id == 0) {
+        new_offset = kvm_get_max_tsc_offset(vcpu);
+
         for (i = 0; i < nvcpus; ++i) {
             vcpu->kvm->vcpus[i]->zerosim.tsc_offset = new_offset;
             vcpu->kvm->vcpus[i]->zerosim.start_missing = 0;
@@ -6885,7 +6887,8 @@ void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
         while(atomic_read(&zerosim_sync_guest_barrier)) { }
     }
 
-    printk(KERN_WARNING "Synchronized guest TSCs to 0x%ld\n", new_offset);
+    printk(KERN_WARNING "Synchronized guest TSCs to %lld\n",
+            vcpu->zerosim.tsc_offset);
 }
 
 #endif
