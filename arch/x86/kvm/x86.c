@@ -5885,11 +5885,14 @@ void kvm_arch_exit(void)
 
 s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
 {
-    s64 max_tsc;
+    s64 max_tsc = 0;
     int i;
     unsigned long long other_tsc;
+    unsigned long long host_local_tsc = rdtsc();
     struct kvm_vcpu *other_vcpu;
     int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+
+    BUG_ON(nvcpus < 1);
 
 	for (i = 0; i < nvcpus; i++) {
         // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
