@@ -5925,7 +5925,7 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
     if (zerosim_skip_halt == 2) {
         // (markm) Don't skip halt but only avoid pausing the TSC.
         vcpu->zerosim.tsc_offset = kvm_get_max_tsc_offset(vcpu);
-        vcpu->zerosim.start_missing = rdtsc();
+        vcpu->zerosim.start_missing = 0;
     }
 #endif
 	if (lapic_in_kernel(vcpu)) {
