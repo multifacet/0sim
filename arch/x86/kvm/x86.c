@@ -5884,8 +5884,9 @@ void kvm_arch_exit(void)
 
 s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
 {
-    s64 max_tsc = 0;
     int i;
+    s64 max_offset = 0;
+    unsigned long long max_tsc = 0;
     unsigned long long other_tsc;
     unsigned long long host_local_tsc = rdtsc();
     struct kvm_vcpu *other_vcpu;
@@ -5901,10 +5902,11 @@ s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
 
         if (other_tsc > max_tsc) {
             max_tsc = other_tsc;
+            max_offset = other_vcpu->zerosim.tsc_offset;
         }
     }
 
-    return max_tsc;
+    return max_offset;
 }
 
 int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
