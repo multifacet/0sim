@@ -5886,6 +5886,7 @@ s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
 {
     int i;
     s64 max_offset = 0;
+    s64 other_offset = 0;
     unsigned long long max_tsc = 0;
     unsigned long long other_tsc;
     unsigned long long host_local_tsc = rdtsc();
@@ -5895,14 +5896,15 @@ s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
     BUG_ON(nvcpus < 1);
 
 	for (i = 0; i < nvcpus; i++) {
-        // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
+        // NOTE: don't use kvm_read_l1_tsc because it reads from the current
+        // core's VMCS.
         other_vcpu = vcpu->kvm->vcpus[i];
-        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc)
-            + kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
+        other_offset = kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
+        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_offset;
 
         if (other_tsc > max_tsc) {
             max_tsc = other_tsc;
-            max_offset = other_vcpu->zerosim.tsc_offset;
+            max_offset = other_offset;
         }
     }
 
@@ -5913,6 +5915,8 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.halt_exits;
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
+    printk("vcpu %d hlted\n", vcpu->vcpu_id);
+
     if (zerosim_skip_halt == 1) {
         // (markm) Turn halt into nop.
         return 1;

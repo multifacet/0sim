@@ -8623,7 +8623,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
             kvm_x86_get_page_fault_time() : 0;
         vcpu->zerosim.start_missing -= kvm_x86_get_entry_exit_time();
 
-        // Now compute the missing time and update the proposed `tsc_offset`.
+        // Now compute the missing time.
         elapsed = rdtsc() - vcpu->zerosim.start_missing;
 
         // Adjust `tsc_offset` but don't actually write the VMCS.
