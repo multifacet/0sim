@@ -6845,6 +6845,9 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
         other_tsc_offset = kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
         other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_tsc_offset;
 
+        printk(KERN_WARNING "[%d / %d] vcpu %d = %llx\n",
+                vcpu->vcpu_id, nvcpus, i, other_tsc);
+
         if (other_tsc < min_tsc) {
             min_tsc = other_tsc;
             slowest_core = i;
@@ -6858,6 +6861,9 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
                 vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc, local_tsc - min_tsc);
         return local_tsc - min_tsc;
     } else {
+        printk(KERN_WARNING
+                "NOT BEHIND vcpu %d on cpu %d, min vcpu %d, %llx\n",
+                vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc);
         return 0;
     }
 }
