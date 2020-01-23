@@ -6841,8 +6841,10 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
         other_tsc = kvm_vcpu_compute_effective_tsc(vcpu->kvm->vcpus[i]);
 
         if (zerosim_verbose & (1<<1)) {
-            printk(KERN_WARNING "[%d / %d] vcpu %d = %llx (%x)\n",
-                    vcpu->vcpu_id, nvcpus, i, other_tsc, other_vcpu->zerosim.state);
+            printk(KERN_WARNING "[%d / %d] vcpu %d = %llx (%x, %lld)\n",
+                    vcpu->vcpu_id, nvcpus, i, other_tsc,
+                    vcpu->kvm->vcpus[i]->zerosim.state,
+                    vcpu->kvm->vcpus[i]->zerosim.tsc_offset);
         }
 
         if (other_tsc < min_tsc) {
