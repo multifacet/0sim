@@ -236,11 +236,12 @@ struct kvm_mmio_fragment {
 struct zerosim_timing_ctrl {
     // The timestamp since the vcpu paused. This is used to update
     // `tsc_offset` by taking the difference with a later timestamp.
-    //
+    unsigned long long start_missing;
+
     // 0 means no update should be made to `tsc_offset`, so that the value of
     // `tsc_offset` is loaded into the VMCS without changes. This could be
     // because the vcpu is currently running.
-    unsigned long long start_missing;
+    bool use_start_missing;
 
     // The TSC offset of the guest _that is too be loaded_ into the VMCS just
     // before `vmenter`.
@@ -259,6 +260,7 @@ static inline void init_zerosim_timing_ctrl(struct zerosim_timing_ctrl *ztc)
 {
     ztc->handled_pf = 0;
     ztc->start_missing = 0;
+    ztc->use_start_missing = 1;
     ztc->tsc_offset = 0;
     ztc->state = ZEROSIM_VCPU_STALLED;
 }
@@ -355,13 +357,10 @@ static inline s64 kvm_vcpu_compute_effective_tsc_offset(struct kvm_vcpu *vcpu)
     // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
 
     if (vcpu->zerosim.state == ZEROSIM_VCPU_STALLED) {
-        if (vcpu->zerosim.start_missing) {
-            u64 now = rdtsc();
-            if (now > vcpu->zerosim.start_missing) {
-                return vcpu->zerosim.tsc_offset - now + vcpu->zerosim.start_missing;
-            }
+        u64 now = rdtsc();
+        if (now > vcpu->zerosim.start_missing) {
+            return vcpu->zerosim.tsc_offset - now + vcpu->zerosim.start_missing;
         }
-
         return vcpu->zerosim.tsc_offset;
     } else if (vcpu->zerosim.state == ZEROSIM_VCPU_HLT
             || vcpu->zerosim.state == ZEROSIM_VCPU_RUNNING)
@@ -379,14 +378,9 @@ static inline u64 kvm_vcpu_compute_effective_tsc(struct kvm_vcpu *vcpu) {
     // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
 
     if (vcpu->zerosim.state == ZEROSIM_VCPU_STALLED) {
-        if (vcpu->zerosim.start_missing) {
-            // Guest time stopped when the stall began.
-            return kvm_scale_tsc(vcpu, vcpu->zerosim.start_missing)
-                + vcpu->zerosim.tsc_offset;
-        }
-
-        // start_missing == 0 indicates that tsc_offset is the current one.
-        return kvm_scale_tsc(vcpu, rdtsc()) + vcpu->zerosim.tsc_offset;
+        // Guest time stopped when the stall began.
+        return kvm_scale_tsc(vcpu, vcpu->zerosim.start_missing)
+            + vcpu->zerosim.tsc_offset;
     } else if (vcpu->zerosim.state == ZEROSIM_VCPU_HLT
             || vcpu->zerosim.state == ZEROSIM_VCPU_RUNNING)
     {

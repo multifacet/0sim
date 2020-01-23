@@ -8617,7 +8617,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
     // Actually offset guest TSC based on time up to now.
     // Assumes that the vcpu is pinned to a single host core.
-    if (vcpu->zerosim.start_missing != 0) {
+    if (vcpu->zerosim.use_start_missing) {
         // Update the start_missing time to account for other sources of overhead.
         vcpu->zerosim.start_missing -= kvm_vcpu_get_and_reset_pf_flag(vcpu) ?
             kvm_x86_get_page_fault_time() : 0;
@@ -8761,6 +8761,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 
     vcpu->zerosim.start_missing = rdtsc();
+    vcpu->zerosim.use_start_missing = 1;
     vcpu->zerosim.state = ZEROSIM_VCPU_STALLED;
 
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)

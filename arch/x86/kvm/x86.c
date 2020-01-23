@@ -5930,7 +5930,7 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 
         case 3:
             // (markm) Only avoid pausing the TSC.
-            vcpu->zerosim.start_missing = 0;
+            vcpu->zerosim.use_start_missing = 0;
             break;
     }
 
@@ -6895,7 +6895,7 @@ void kvm_sync_guest_tsc(struct kvm_vcpu *vcpu)
 
         for (i = 0; i < nvcpus; ++i) {
             vcpu->kvm->vcpus[i]->zerosim.tsc_offset = new_offset;
-            vcpu->kvm->vcpus[i]->zerosim.start_missing = 0;
+            vcpu->kvm->vcpus[i]->zerosim.use_start_missing = 0;
         }
 
         // Reset the barrier, allowing everyone to continue.
