@@ -5892,7 +5892,7 @@ s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
     unsigned long long other_tsc;
     struct kvm_vcpu *other_vcpu;
     int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
-    s64 max_offset = kvm_vcpu_compute_effective_tsc_offset(vcpu);
+    s64 max_offset = 0;
 
     BUG_ON(nvcpus < 1);
 
@@ -6813,7 +6813,6 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // This depends on the assumption that the host TSC's of all cpus are roughly
     // synchronized, which may or may not be true.
 
-    unsigned long long host_local_tsc;
     unsigned long long local_tsc;
     int i, nvcpus;
     unsigned long long min_tsc;
@@ -6833,16 +6832,11 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     }
 
     // TSC on this core and vcpu
-    host_local_tsc = rdtsc();
     local_tsc = kvm_vcpu_compute_effective_tsc(vcpu);
-
-    // The lowest tsc of any vcpu
     min_tsc = local_tsc;
     slowest_core = vcpu->vcpu_id;
 
-    // We don't return immediately when we find the first "behind" vcpu.
-    // Instead, we look for the _most_ "behind" vcpu so that we can judge how
-    // long to wait.
+    // Look for the _most_ "behind" vcpu.
 	for (i = 0; i < nvcpus; i++) {
         other_tsc = kvm_vcpu_compute_effective_tsc(vcpu->kvm->vcpus[i]);
 

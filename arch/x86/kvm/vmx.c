@@ -2516,7 +2516,6 @@ static void vmx_force_tsc_offset_guest(struct kvm_vcpu *vcpu)
     if (enable_tsc_offsetting) {
         vmcs_write64(TSC_OFFSET, vcpu->zerosim.tsc_offset);
         zerosim_report_guest_offset(vcpu->vcpu_id, vcpu->zerosim.tsc_offset);
-        vcpu->zerosim.start_missing = 0;
     }
 #endif
 }
