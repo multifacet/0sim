@@ -8632,6 +8632,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
     // Update the TSC offset in the VMCS (if offsetting is enabled)
     vmx_force_tsc_offset_guest(vcpu);
+    vcpu->zerosim.state = ZEROSIM_VCPU_RUNNING;
 
 	atomic_switch_perf_msrs(vmx);
 	debugctlmsr = get_debugctlmsr();
@@ -8760,6 +8761,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 
     vcpu->zerosim.start_missing = rdtsc();
+    vcpu->zerosim.state = ZEROSIM_VCPU_STALLED;
 
 	vcpu->arch.regs_avail = ~((1 << VCPU_REGS_RIP) | (1 << VCPU_REGS_RSP)
 				  | (1 << VCPU_EXREG_RFLAGS)
@@ -8775,6 +8777,9 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx->exit_reason = vmcs_read32(VM_EXIT_REASON);
 
     switch (vmx->exit_reason) {
+        case EXIT_REASON_HLT:
+            vcpu->zerosim.state = ZEROSIM_VCPU_HLT;
+            break;
         case EXIT_REASON_EXTERNAL_INTERRUPT:
             zerosim_trace_vm_exit(vmx->exit_reason,
                     (unsigned long) vmcs_read32(VM_EXIT_INTR_INFO) & INTR_INFO_VECTOR_MASK);

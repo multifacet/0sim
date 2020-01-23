@@ -5888,26 +5888,21 @@ void kvm_arch_exit(void)
 s64 kvm_get_max_tsc_offset(struct kvm_vcpu *vcpu)
 {
     int i;
-    s64 max_offset = 0;
-    s64 other_offset = 0;
     unsigned long long max_tsc = 0;
     unsigned long long other_tsc;
-    unsigned long long host_local_tsc = rdtsc();
     struct kvm_vcpu *other_vcpu;
     int nvcpus = atomic_read(&vcpu->kvm->online_vcpus);
+    s64 max_offset = kvm_vcpu_compute_effective_tsc_offset(vcpu);
 
     BUG_ON(nvcpus < 1);
 
 	for (i = 0; i < nvcpus; i++) {
-        // NOTE: don't use kvm_read_l1_tsc because it reads from the current
-        // core's VMCS.
         other_vcpu = vcpu->kvm->vcpus[i];
-        other_offset = kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
-        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_offset;
+        other_tsc = kvm_vcpu_compute_effective_tsc(other_vcpu);
 
         if (other_tsc > max_tsc) {
             max_tsc = other_tsc;
-            max_offset = other_offset;
+            max_offset = kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
         }
     }
 
@@ -5922,16 +5917,23 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
         printk("vcpu %d hlted\n", vcpu->vcpu_id);
     }
 
-    if (zerosim_skip_halt == 1) {
-        // (markm) Turn halt into nop.
-        return 1;
+    switch (zerosim_skip_halt) {
+        case 1:
+            // (markm) Turn halt into nop.
+            return 1;
+
+        case 2:
+            // (markm) Make the vCPU jump forward.
+            vcpu->zerosim.tsc_offset = kvm_get_max_tsc_offset(vcpu);
+
+            // fall through
+
+        case 3:
+            // (markm) Only avoid pausing the TSC.
+            vcpu->zerosim.start_missing = 0;
+            break;
     }
 
-    if (zerosim_skip_halt == 2) {
-        // (markm) Don't skip halt but only avoid pausing the TSC.
-        vcpu->zerosim.tsc_offset = kvm_get_max_tsc_offset(vcpu);
-        vcpu->zerosim.start_missing = 0;
-    }
 #endif
 	if (lapic_in_kernel(vcpu)) {
 		vcpu->arch.mp_state = KVM_MP_STATE_HALTED;
@@ -6814,11 +6816,9 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     unsigned long long host_local_tsc;
     unsigned long long local_tsc;
     int i, nvcpus;
-    struct kvm_vcpu *other_vcpu;
     unsigned long long min_tsc;
     unsigned long long other_tsc;
     int slowest_core;
-    s64 other_tsc_offset;
 
     // If offsetting is not enabled
     if (!zerosim_multicore_sync || !kvm_x86_ops->tsc_offsetting_enabled()) {
@@ -6834,8 +6834,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
 
     // TSC on this core and vcpu
     host_local_tsc = rdtsc();
-    local_tsc = kvm_scale_tsc(vcpu, host_local_tsc)
-        + kvm_vcpu_compute_effective_tsc_offset(vcpu);
+    local_tsc = kvm_vcpu_compute_effective_tsc(vcpu);
 
     // The lowest tsc of any vcpu
     min_tsc = local_tsc;
@@ -6845,10 +6844,7 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     // Instead, we look for the _most_ "behind" vcpu so that we can judge how
     // long to wait.
 	for (i = 0; i < nvcpus; i++) {
-        // NOTE: don't use kvm_read_l1_tsc because it reads from the current core's VMCS.
-        other_vcpu = vcpu->kvm->vcpus[i];
-        other_tsc_offset = kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
-        other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_tsc_offset;
+        other_tsc = kvm_vcpu_compute_effective_tsc(vcpu->kvm->vcpus[i]);
 
         if (zerosim_verbose & (1<<1)) {
             printk(KERN_WARNING "[%d / %d] vcpu %d = %llx\n",
