@@ -6872,8 +6872,8 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
     } else {
         if (zerosim_verbose & (1<<3)) {
             printk(KERN_WARNING
-                    "NOT BEHIND vcpu %d on cpu %d, min vcpu %d, %llx\n",
-                    vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc);
+                "NOT AHEAD vcpu %d on cpu %d, min vcpu %d, %llx\n",
+                vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc);
         }
         return 0;
     }
@@ -6984,6 +6984,10 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
                 }
                 zerosim_trace_vm_delay_end(vcpu->vcpu_id);
             } else {
+                if (zerosim_verbose & (1<<4)) {
+                    printk(KERN_WARNING "[%d] not pausing\n", vcpu->vcpu_id);
+                }
+
                 break;
             }
 		}
