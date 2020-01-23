@@ -359,7 +359,7 @@ static inline s64 kvm_vcpu_compute_effective_tsc_offset(struct kvm_vcpu *vcpu)
     if (vcpu->zerosim.state == ZEROSIM_VCPU_STALLED) {
         u64 now = rdtsc();
         if (now > vcpu->zerosim.start_missing) {
-            return vcpu->zerosim.tsc_offset - now + vcpu->zerosim.start_missing;
+            return vcpu->zerosim.tsc_offset - (now - vcpu->zerosim.start_missing);
         }
         return vcpu->zerosim.tsc_offset;
     } else if (vcpu->zerosim.state == ZEROSIM_VCPU_HLT
