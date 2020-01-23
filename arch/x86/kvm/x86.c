@@ -86,6 +86,7 @@ ZEROSIM_PROC_CREATE(unsigned long, zerosim_delta, ZEROSIM_DELAY_DEFAULT, "%lu");
 ZEROSIM_PROC_CREATE(int, zerosim_skip_halt, false, "%d");
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_multicore_sync, false, "%lu");
 ZEROSIM_PROC_CREATE(unsigned long, zerosim_sync_guest_tsc, false, "%lu");
+ZEROSIM_PROC_CREATE(int, zerosim_verbose, 0, "%d");
 
 static int zerosim_instrumentation_init(void)
 {
@@ -99,6 +100,8 @@ static int zerosim_instrumentation_init(void)
         proc_create("zerosim_multicore_sync", 0444, NULL, &zerosim_multicore_sync_ops);
 	zerosim_sync_guest_tsc_ent =
         proc_create("zerosim_sync_guest_tsc", 0444, NULL, &zerosim_sync_guest_tsc_ops);
+	zerosim_verbose_ent =
+        proc_create("zerosim_verbose", 0444, NULL, &zerosim_verbose_ops);
 
     zerosim_elapsed_init();
 
@@ -5915,7 +5918,9 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.halt_exits;
 #ifdef CONFIG_X86_TSC_OFFSET_HOST_ELAPSED
-    printk("vcpu %d hlted\n", vcpu->vcpu_id);
+    if (zerosim_verbose & (1<<0)) {
+        printk("vcpu %d hlted\n", vcpu->vcpu_id);
+    }
 
     if (zerosim_skip_halt == 1) {
         // (markm) Turn halt into nop.
@@ -6845,8 +6850,10 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
         other_tsc_offset = kvm_vcpu_compute_effective_tsc_offset(other_vcpu);
         other_tsc = kvm_scale_tsc(other_vcpu, host_local_tsc) + other_tsc_offset;
 
-        printk(KERN_WARNING "[%d / %d] vcpu %d = %llx\n",
-                vcpu->vcpu_id, nvcpus, i, other_tsc);
+        if (zerosim_verbose & (1<<1)) {
+            printk(KERN_WARNING "[%d / %d] vcpu %d = %llx\n",
+                    vcpu->vcpu_id, nvcpus, i, other_tsc);
+        }
 
         if (other_tsc < min_tsc) {
             min_tsc = other_tsc;
@@ -6856,14 +6863,18 @@ static inline unsigned long long vcpu_is_ahead(struct kvm_vcpu *vcpu)
 
     // If the most "behind" vcpu is not that far behind, we don't care too much.
     if (min_tsc < (local_tsc - zerosim_d)) {
-        printk(KERN_WARNING
+        if (zerosim_verbose & (1<<2)) {
+            printk(KERN_WARNING
                 "Stalling vcpu %d on cpu %d, waiting for vcpu %d, %llx, behind by %llu\n",
                 vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc, local_tsc - min_tsc);
+        }
         return local_tsc - min_tsc;
     } else {
-        printk(KERN_WARNING
-                "NOT BEHIND vcpu %d on cpu %d, min vcpu %d, %llx\n",
-                vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc);
+        if (zerosim_verbose & (1<<3)) {
+            printk(KERN_WARNING
+                    "NOT BEHIND vcpu %d on cpu %d, min vcpu %d, %llx\n",
+                    vcpu->vcpu_id, vcpu->cpu, slowest_core, min_tsc);
+        }
         return 0;
     }
 }
