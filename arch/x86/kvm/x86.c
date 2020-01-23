@@ -6962,6 +6962,9 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
                 cond_resched();
                 vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
             } else if ((behind = vcpu_is_ahead(vcpu))) {
+                // Might have been in a hlt, but we are stalled now.
+                vcpu->zerosim.state = ZEROSIM_VCPU_STALLED;
+
                 zerosim_trace_vm_delay_begin(vcpu->vcpu_id, behind);
                 if (zerosim_delta == ZEROSIM_YIELD) {
                     srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
