@@ -82,6 +82,7 @@
 #include <linux/proc_ns.h>
 #include <linux/io.h>
 #include <linux/cache.h>
+#include <linux/mm_stats.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -1020,6 +1021,8 @@ static noinline void __init kernel_init_freeable(void)
 	smp_prepare_cpus(setup_max_cpus);
 
 	workqueue_init();
+
+	mm_stats_init();
 
 	do_pre_smp_initcalls();
 	lockup_detector_init();

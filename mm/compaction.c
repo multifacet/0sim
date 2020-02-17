@@ -20,6 +20,7 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/page_owner.h>
+#include <linux/mm_stats.h>
 #include "internal.h"
 
 #ifdef CONFIG_COMPACTION
@@ -1972,6 +1973,7 @@ static int kcompactd(void *p)
 {
 	pg_data_t *pgdat = (pg_data_t*)p;
 	struct task_struct *tsk = current;
+    u64 start;
 
 	const struct cpumask *cpumask = cpumask_of_node(pgdat->node_id);
 
@@ -1988,7 +1990,9 @@ static int kcompactd(void *p)
 		wait_event_freezable(pgdat->kcompactd_wait,
 				kcompactd_work_requested(pgdat));
 
+		start = rdtsc();
 		kcompactd_do_work(pgdat);
+		mm_stats_hist_measure(&mm_indirect_compaction_cycles, rdtsc() - start);
 	}
 
 	return 0;

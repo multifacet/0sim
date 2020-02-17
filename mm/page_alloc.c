@@ -64,6 +64,7 @@
 #include <linux/page_owner.h>
 #include <linux/kthread.h>
 #include <linux/memcontrol.h>
+#include <linux/mm_stats.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
@@ -3163,9 +3164,12 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 		enum compact_priority prio, enum compact_result *compact_result)
 {
 	struct page *page;
+	u64 start;
 
 	if (!order)
 		return NULL;
+
+	start = rdtsc();
 
 	current->flags |= PF_MEMALLOC;
 	*compact_result = try_to_compact_pages(gfp_mask, order, alloc_flags, ac,
@@ -3182,6 +3186,9 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	count_vm_event(COMPACTSTALL);
 
 	page = get_page_from_freelist(gfp_mask, order, alloc_flags, ac);
+
+    // The rest is fairly cheap
+    mm_stats_hist_measure(&mm_direct_compaction_cycles, rdtsc() - start);
 
 	if (page) {
 		struct zone *zone = page_zone(page);
