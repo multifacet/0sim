@@ -215,3 +215,24 @@ writing to the appropriate file. You need sudo to do so.
 
 - Ubuntu only supports up to 1023GB of RAM. If you use 1024, or any greater
   value, your VM will hang at boot time.
+
+## Branches
+
+- `master`: stable 0sim.
+- `markm_instrumented`: v5.1 with memory init, thp compaction, and reclamation/swap instrumented.
+- `markm_instrumented_v5.2.9`: `markm_instrumented` rebased onto `v5.2.9
+- `markm_instrument_ktask`: v5.1 with ktask patchset applied and instrumented.
+- `markm_eager_paging`: Swapnil's eager paging patches applied over v4.10-rc7
+
+- `dev`: cleaned-up version of `markm-ztier-old` with squashed commits and
+  multicore TSC offsetting disabled. This is an experimental "next master".
+
+- `dev-rebased-2`: attempt to rebase `dev` onto v5.6-rc1, compiles and runs but...
+    - timing is wonky... not sure why
+    - the zswap module for zerosim is called `zerosim_swap`, so tooling will break
+- `markm-ztier-old`: various attempts at multicore TSC offsetting + debugging
+  code, based off of `master` without squashing any commits. This contains the
+  full commit history of 0sim.
+    - `master` currently is at commit `71c654feb17b`.
+- `markm_ssdswap2`: old branch before 0sim was complete with an alternate
+  ssdswap implementation.
