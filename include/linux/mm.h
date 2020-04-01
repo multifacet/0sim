@@ -329,7 +329,7 @@ struct vm_fault {
 /*
  * These are the virtual MM functions - opening of an area, closing and
  * unmapping it (needed to keep files on disk up-to-date etc), pointer
- * to the functions called when a no-page or a wp-page exception occurs. 
+ * to the functions called when a no-page or a wp-page exception occurs.
  */
 struct vm_operations_struct {
 	void (*open)(struct vm_area_struct * area);
@@ -1107,6 +1107,8 @@ static inline void clear_page_pfmemalloc(struct page *page)
 			 VM_FAULT_HWPOISON | VM_FAULT_HWPOISON_LARGE | \
 			 VM_FAULT_FALLBACK)
 
+#define VM_FAULT_BASE_PAGE 0x2000 /* -> page fault did not alloc a huge page */
+
 /* Encode hstate index for a hwpoisoned large page */
 #define VM_FAULT_SET_HINDEX(x) ((x) << 12)
 #define VM_FAULT_GET_HINDEX(x) (((x) >> 12) & 0xf)
@@ -1243,7 +1245,7 @@ extern int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 			    bool *unlocked);
 extern int fill_page_table_manually_cow(struct mm_struct *mm , struct vm_area_struct *vma,
                                     unsigned long addr, unsigned int nr_pages, unsigned int flags);
-extern int fill_page_table_manually(struct mm_struct *mm , struct vm_area_struct *vma, 
+extern int fill_page_table_manually(struct mm_struct *mm , struct vm_area_struct *vma,
 				unsigned long addr, unsigned int nr_pages);
 #else
 static inline int handle_mm_fault(struct vm_area_struct *vma,
@@ -2050,7 +2052,7 @@ static inline void mm_populate(unsigned long addr, unsigned long len,
 	(void) __mm_populate(addr, len, 1, apriori_flag);
 }
 #else
-static inline void mm_populate(unsigned long addr, unsigned long len, 
+static inline void mm_populate(unsigned long addr, unsigned long len,
 			unsigned long apriori_flag) {}
 #endif
 

@@ -235,7 +235,7 @@ force_sig_info_fault(int si_signo, int si_code, unsigned long address,
 	info.si_code	= si_code;
 	info.si_addr	= (void __user *)address;
 	if (fault & VM_FAULT_HWPOISON_LARGE)
-		lsb = hstate_index_to_shift(VM_FAULT_GET_HINDEX(fault)); 
+		lsb = hstate_index_to_shift(VM_FAULT_GET_HINDEX(fault));
 	if (fault & VM_FAULT_HWPOISON)
 		lsb = PAGE_SHIFT;
 	info.si_addr_lsb = lsb;
@@ -499,7 +499,7 @@ NOKPROBE_SYMBOL(vmalloc_fault);
 
 #ifdef CONFIG_CPU_SUP_AMD
 static const char errata93_warning[] =
-KERN_ERR 
+KERN_ERR
 "******* Your BIOS seems to not contain a fix for K8 errata #93\n"
 "******* Working around it, but it may cause SEGVs or burn power.\n"
 "******* Please consider a BIOS update.\n"
@@ -1211,7 +1211,7 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
  * {,trace_}do_page_fault() have notrace on. Having this an actual function
  * guarantees there's a function trace entry.
  */
-static noinline void
+static noinline bool
 __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 		unsigned long address)
 {
@@ -1220,6 +1220,7 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	struct mm_struct *mm;
 	int fault, major = 0;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
+	bool is_huge = false;
 
 	tsk = current;
 	mm = tsk->mm;
@@ -1233,7 +1234,7 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	prefetchw(&mm->mmap_sem);
 
 	if (unlikely(kmmio_fault(regs, address)))
-		return;
+		return false;
 
 	/*
 	 * We fault-in kernel-space virtual memory on-demand. The
@@ -1251,38 +1252,38 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	if (unlikely(fault_in_kernel_space(address))) {
 		if (!(error_code & (PF_RSVD | PF_USER | PF_PROT))) {
 			if (vmalloc_fault(address) >= 0)
-				return;
+				return false;
 
 			if (kmemcheck_fault(regs, address, error_code))
-				return;
+				return false;
 		}
 
 		/* Can handle a stale RO->RW TLB: */
 		if (spurious_fault(error_code, address))
-			return;
+			return false;
 
 		/* kprobes don't want to hook the spurious faults: */
 		if (kprobes_fault(regs))
-			return;
+			return false;
 		/*
 		 * Don't take the mm semaphore here. If we fixup a prefetch
 		 * fault we could otherwise deadlock:
 		 */
 		bad_area_nosemaphore(regs, error_code, address, NULL);
 
-		return;
+		return false;
 	}
 
 	/* kprobes don't want to hook the spurious faults: */
 	if (unlikely(kprobes_fault(regs)))
-		return;
+		return false;
 
 	if (unlikely(error_code & PF_RSVD))
 		pgtable_bad(regs, error_code, address);
 
 	if (unlikely(smap_violation(error_code, regs))) {
 		bad_area_nosemaphore(regs, error_code, address, NULL);
-		return;
+		return false;
 	}
 
 	/*
@@ -1291,7 +1292,7 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 	 */
 	if (unlikely(faulthandler_disabled() || !mm)) {
 		bad_area_nosemaphore(regs, error_code, address, NULL);
-		return;
+		return false;
 	}
 
 	/*
@@ -1337,7 +1338,7 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code,
 		if ((error_code & PF_USER) == 0 &&
 		    !search_exception_tables(regs->ip)) {
 			bad_area_nosemaphore(regs, error_code, address, NULL);
-			return;
+			return false;
 		}
 retry:
 		down_read(&mm->mmap_sem);
@@ -1353,13 +1354,13 @@ retry:
 	vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
 		bad_area(regs, error_code, address);
-		return;
+		return false;
 	}
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
 		bad_area(regs, error_code, address);
-		return;
+		return false;
 	}
 	if (error_code & PF_USER) {
 		/*
@@ -1370,12 +1371,12 @@ retry:
 		 */
 		if (unlikely(address + 65536 + 32 * sizeof(unsigned long) < regs->sp)) {
 			bad_area(regs, error_code, address);
-			return;
+			return false;
 		}
 	}
 	if (unlikely(expand_stack(vma, address))) {
 		bad_area(regs, error_code, address);
-		return;
+		return false;
 	}
 
 	/*
@@ -1385,7 +1386,7 @@ retry:
 good_area:
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address, vma);
-		return;
+		return false;
 	}
 
 	/*
@@ -1396,6 +1397,8 @@ good_area:
 	 */
 	fault = handle_mm_fault(vma, address, flags);
 	major |= fault & VM_FAULT_MAJOR;
+
+	is_huge = !(fault & (VM_FAULT_OOM | VM_FAULT_BASE_PAGE));
 
 	/*
 	 * If we need to retry the mmap_sem has already been released,
@@ -1413,17 +1416,17 @@ good_area:
 
 		/* User mode? Just return to handle the fatal exception */
 		if (flags & FAULT_FLAG_USER)
-			return;
+			return is_huge;
 
 		/* Not returning to user mode? Handle exceptions or die: */
 		no_context(regs, error_code, address, SIGBUS, BUS_ADRERR);
-		return;
+		return is_huge;
 	}
 
 	up_read(&mm->mmap_sem);
 	if (unlikely(fault & VM_FAULT_ERROR)) {
 		mm_fault_error(regs, error_code, address, vma, fault);
-		return;
+		return is_huge;
 	}
 
 	/*
@@ -1439,6 +1442,8 @@ good_area:
 	}
 
 	check_v8086_mode(regs, address, tsk);
+
+	return is_huge;
 }
 NOKPROBE_SYMBOL(__do_page_fault);
 
@@ -1447,6 +1452,9 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
 	unsigned long address = read_cr2(); /* Get the faulting address */
 	enum ctx_state prev_state;
+	bool huge;
+
+	u64 start = rdtsc();
 
 	/*
 	 * We must have this function tagged with __kprobes, notrace and call
@@ -1458,7 +1466,14 @@ do_page_fault(struct pt_regs *regs, unsigned long error_code)
 
 	prev_state = exception_enter();
 	__do_page_fault(regs, error_code, address);
+	huge = __do_page_fault(regs, error_code, address);
 	exception_exit(prev_state);
+
+	if (huge) {
+		mm_stats_hist_measure(&mm_huge_page_fault_cycles, rdtsc() - start);
+	} else {
+		mm_stats_hist_measure(&mm_base_page_fault_cycles, rdtsc() - start);
+	}
 }
 NOKPROBE_SYMBOL(do_page_fault);
 
@@ -1484,15 +1499,20 @@ trace_do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	 */
 	unsigned long address = read_cr2();
 	enum ctx_state prev_state;
+	bool huge;
 
-    u64 start = rdtsc();
+	u64 start = rdtsc();
 
 	prev_state = exception_enter();
 	trace_page_fault_entries(address, regs, error_code);
-	__do_page_fault(regs, error_code, address);
+	huge = __do_page_fault(regs, error_code, address);
 	exception_exit(prev_state);
 
-    mm_stats_hist_measure(&mm_page_fault_cycles, rdtsc() - start);
+	if (huge) {
+		mm_stats_hist_measure(&mm_huge_page_fault_cycles, rdtsc() - start);
+	} else {
+		mm_stats_hist_measure(&mm_base_page_fault_cycles, rdtsc() - start);
+	}
 }
 NOKPROBE_SYMBOL(trace_do_page_fault);
 #endif /* CONFIG_TRACING */

@@ -12,7 +12,8 @@ void mm_stats_init(void);
 void mm_stats_hist_measure(struct mm_hist *hist, u64 val);
 
 // Externed stats...
-extern struct mm_hist mm_page_fault_cycles;
+extern struct mm_hist mm_base_page_fault_cycles;
+extern struct mm_hist mm_huge_page_fault_cycles;
 extern struct mm_hist mm_direct_compaction_cycles;
 extern struct mm_hist mm_indirect_compaction_cycles;
 

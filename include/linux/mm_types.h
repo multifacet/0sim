@@ -514,7 +514,7 @@ struct mm_struct {
 	atomic_long_t hugetlb_usage;
 #endif
 	struct work_struct async_put_work;
-	
+
 	/* SWAPNIL: Variables for apriori_paging + identity_mapping */
 	unsigned int apriori_paging_en;
 	unsigned int identity_mapping_en;

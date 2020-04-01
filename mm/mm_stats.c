@@ -316,8 +316,9 @@ static int hist_sprintf(struct file *file, char __user *ubuf,
 ///////////////////////////////////////////////////////////////////////////////
 // Define various stats below.
 
-// Histogram of page fault latency.
-MM_STATS_PROC_CREATE_HIST(mm_page_fault_cycles);
+// Histogram of page fault latency (base page and huge page).
+MM_STATS_PROC_CREATE_HIST(mm_base_page_fault_cycles);
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_cycles);
 
 // Histograms of compaction events.
 MM_STATS_PROC_CREATE_HIST(mm_direct_compaction_cycles);
@@ -325,7 +326,8 @@ MM_STATS_PROC_CREATE_HIST(mm_indirect_compaction_cycles);
 
 void mm_stats_init(void)
 {
-    MM_STATS_INIT_HIST(mm_page_fault_cycles);
+    MM_STATS_INIT_HIST(mm_base_page_fault_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_fault_cycles);
     MM_STATS_INIT_HIST(mm_direct_compaction_cycles);
     MM_STATS_INIT_HIST(mm_indirect_compaction_cycles);
 }
