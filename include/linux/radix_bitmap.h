@@ -83,9 +83,9 @@ int radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx,
                      struct radix_bitmap_l1 *new_l1);
 
 /*
- * Unset the given bit.
+ * Unset the given bit. Returns the previous value of the bit.
  */
-void radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx);
+int radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx);
 
 /*
  * Clear the entire bitmap.

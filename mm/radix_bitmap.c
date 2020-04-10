@@ -166,13 +166,14 @@ int radix_bitmap_set(struct radix_bitmap *rb, unsigned long idx,
 }
 
 /*
- * Unset the given bit.
+ * Unset the given bit. Returns the previous value of the bit.
  */
-void radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx) {
+int radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx) {
     // Get the l0 and l1 offset
     unsigned long l0_idx = (idx & L0_MASK) >> L1_ORDER;
     unsigned long l1_idx = idx & L1_MASK;
     struct radix_bitmap_l1 *l1;
+    int prev = 0;
 
     BUG_ON(!rb);
     BUG_ON(!rb->l0);
@@ -185,12 +186,15 @@ void radix_bitmap_unset(struct radix_bitmap *rb, unsigned long idx) {
 
     // Is there an entry? If not, we're done.
     if (!l1) {
-        return;
+        return 0;
     }
 
     // Unset the appropriate bit. First 24 bits are which byte in bitmap.
     // Last 3 bits (mask=0x7) are idx of bit in char.
+    prev = l1->bits[l1_idx >> 3] & BIT(l1_idx & 7);
     l1->bits[l1_idx >> 3] &= ~BIT(l1_idx & 7);
+
+    return !!prev;
 }
 
 /*
