@@ -1104,6 +1104,8 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
         }
     }
 
+    spin_unlock(&tree->lock);
+
 	/* allocate entry */
 	entry = zswap_entry_cache_alloc(GFP_KERNEL);
 	if (!entry) {
