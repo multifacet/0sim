@@ -64,6 +64,7 @@
 #include <linux/debugfs.h>
 #include <linux/userfaultfd_k.h>
 #include <linux/dax.h>
+#include <linux/mm_stats.h>
 
 #include <asm/io.h>
 #include <asm/mmu_context.h>
@@ -4210,6 +4211,7 @@ void clear_huge_page(struct page *page,
 		     unsigned long addr, unsigned int pages_per_huge_page)
 {
 	int i;
+	u64 start = rdtsc();
 
 	if (unlikely(pages_per_huge_page > MAX_ORDER_NR_PAGES)) {
 		clear_gigantic_page(page, addr, pages_per_huge_page);
@@ -4221,6 +4223,8 @@ void clear_huge_page(struct page *page,
 		cond_resched();
 		clear_user_highpage(page + i, addr + i * PAGE_SIZE);
 	}
+
+	mm_stats_hist_measure(&mm_huge_page_fault_clear_cycles, rdtsc() - start);
 }
 
 static void copy_user_gigantic_page(struct page *dst, struct page *src,

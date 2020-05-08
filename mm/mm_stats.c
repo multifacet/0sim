@@ -316,18 +316,46 @@ static int hist_sprintf(struct file *file, char __user *ubuf,
 ///////////////////////////////////////////////////////////////////////////////
 // Define various stats below.
 
-// Histogram of page fault latency (base page and huge page).
+// Histograms of page fault latency (base page and huge page).
 MM_STATS_PROC_CREATE_HIST(mm_base_page_fault_cycles);
 MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_cycles);
+// Cycles to allocate a new huge page in the pf handler (pages are never
+// promoted in pf handler). This is a subset of the previous histogram. This
+// only includes successful operations. Huge zero-page is not included.
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_create_new_cycles);
+// Time to clear a new huge page. This is a subset of the previous histogram.
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_clear_cycles);
+// Create a new huge zero page.
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_zero_page_cycles);
 
 // Histograms of compaction events.
 MM_STATS_PROC_CREATE_HIST(mm_direct_compaction_cycles);
 MM_STATS_PROC_CREATE_HIST(mm_indirect_compaction_cycles);
 
+// Histograms of reclamation events.
+MM_STATS_PROC_CREATE_HIST(mm_direct_reclamation_cycles);
+
+// Histograms of huge page promotion/demotion events.
+// Cycles spent by khugepaged to find and promote.
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_promotion_scanning_cycles);
+// Subset of the above, specifically the work to promote once we have found a
+// page. Only includes successful operations.
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_promotion_work_cycles);
+// Subset of the above, specifically the copying of contents to the new huge
+// page. Only includes successful operations.
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_promotion_copy_pages_cycles);
+
 void mm_stats_init(void)
 {
     MM_STATS_INIT_HIST(mm_base_page_fault_cycles);
     MM_STATS_INIT_HIST(mm_huge_page_fault_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_fault_create_new_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_fault_clear_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_fault_zero_page_cycles);
     MM_STATS_INIT_HIST(mm_direct_compaction_cycles);
     MM_STATS_INIT_HIST(mm_indirect_compaction_cycles);
+    MM_STATS_INIT_HIST(mm_direct_reclamation_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_promotion_scanning_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_promotion_work_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_promotion_copy_pages_cycles);
 }

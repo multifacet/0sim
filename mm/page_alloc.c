@@ -3344,10 +3344,13 @@ __alloc_pages_direct_reclaim(gfp_t gfp_mask, unsigned int order,
 {
 	struct page *page = NULL;
 	bool drained = false;
+	u64 start = rdtsc();
 
 	*did_some_progress = __perform_reclaim(gfp_mask, order, ac);
-	if (unlikely(!(*did_some_progress)))
+	if (unlikely(!(*did_some_progress))) {
+		mm_stats_hist_measure(&mm_direct_reclamation_cycles, rdtsc() - start);
 		return NULL;
+	}
 
 retry:
 	page = get_page_from_freelist(gfp_mask, order, alloc_flags, ac);
@@ -3363,6 +3366,8 @@ retry:
 		drained = true;
 		goto retry;
 	}
+
+	mm_stats_hist_measure(&mm_direct_reclamation_cycles, rdtsc() - start);
 
 	return page;
 }

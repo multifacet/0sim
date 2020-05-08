@@ -30,6 +30,7 @@
 #include <linux/userfaultfd_k.h>
 #include <linux/page_idle.h>
 #include <linux/shmem_fs.h>
+#include <linux/mm_stats.h>
 
 #include <asm/tlb.h>
 #include <asm/pgalloc.h>
@@ -657,6 +658,8 @@ int do_huge_pmd_anonymous_page(struct vm_fault *vmf)
 	gfp_t gfp;
 	struct page *page;
 	unsigned long haddr = vmf->address & HPAGE_PMD_MASK;
+	vm_fault_t ret;
+	u64 start = rdtsc();
 
 	if (haddr < vma->vm_start || haddr + HPAGE_PMD_SIZE > vma->vm_end)
 		return VM_FAULT_FALLBACK;
@@ -698,6 +701,10 @@ int do_huge_pmd_anonymous_page(struct vm_fault *vmf)
 			spin_unlock(vmf->ptl);
 		if (!set)
 			pte_free(vma->vm_mm, pgtable);
+		else
+			mm_stats_hist_measure(
+				&mm_huge_page_fault_zero_page_cycles,
+				rdtsc() - start);
 		return ret;
 	}
 	gfp = alloc_hugepage_direct_gfpmask(vma);
@@ -707,7 +714,11 @@ int do_huge_pmd_anonymous_page(struct vm_fault *vmf)
 		return VM_FAULT_FALLBACK;
 	}
 	prep_transhuge_page(page);
-	return __do_huge_pmd_anonymous_page(vmf, page, gfp);
+	ret = __do_huge_pmd_anonymous_page(vmf, page, gfp);
+
+	mm_stats_hist_measure(&mm_huge_page_fault_create_new_cycles, rdtsc() - start);
+
+	return ret;
 }
 
 static void insert_pfn_pmd(struct vm_area_struct *vma, unsigned long addr,
