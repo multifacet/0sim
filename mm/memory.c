@@ -4251,6 +4251,7 @@ void copy_user_huge_page(struct page *dst, struct page *src,
 			 unsigned int pages_per_huge_page)
 {
 	int i;
+	u64 start = rdtsc();
 
 	if (unlikely(pages_per_huge_page > MAX_ORDER_NR_PAGES)) {
 		copy_user_gigantic_page(dst, src, addr, vma,
@@ -4259,6 +4260,8 @@ void copy_user_huge_page(struct page *dst, struct page *src,
 	}
 
 	might_sleep();
+
+	mm_stats_hist_measure(&mm_huge_page_fault_cow_copy_huge_cycles, rdtsc() - start);
 	for (i = 0; i < pages_per_huge_page; i++) {
 		cond_resched();
 		copy_user_highpage(dst + i, src + i, addr + i*PAGE_SIZE, vma);

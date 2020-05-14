@@ -17,6 +17,8 @@ extern struct mm_hist mm_huge_page_fault_cycles;
 extern struct mm_hist mm_huge_page_fault_create_new_cycles;
 extern struct mm_hist mm_huge_page_fault_clear_cycles;
 extern struct mm_hist mm_huge_page_fault_zero_page_cycles;
+extern struct mm_hist mm_huge_page_fault_wp_cycles;
+extern struct mm_hist mm_huge_page_fault_cow_copy_huge_cycles;
 extern struct mm_hist mm_direct_compaction_cycles;
 extern struct mm_hist mm_indirect_compaction_cycles;
 extern struct mm_hist mm_direct_reclamation_cycles;

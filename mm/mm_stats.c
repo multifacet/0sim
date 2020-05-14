@@ -327,6 +327,21 @@ MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_create_new_cycles);
 MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_clear_cycles);
 // Create a new huge zero page.
 MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_zero_page_cycles);
+// Time for a page fault touching a write-protected anon huge page. This
+// usually means a COW. There are a few things that can happen here:
+// - If nobody else is using the page, we can just make it writable.
+// - If there is no backing page, we need to allocate a huge page. Then, we
+//   need to clear it.
+// - Otherwise, we try to make a private copy of the huge page (COW), which
+//   involves copying the entire old huge page.
+// - Otherwise, we fall back to splitting the page into base pages.
+//
+// For now we don't split out all of these possibilities, but it's not hard to
+// do so (just a bit of work).
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_wp_cycles);
+// Time to copy the huge page during a COW clone. This is a subset of the
+// previous histogram.
+MM_STATS_PROC_CREATE_HIST(mm_huge_page_fault_cow_copy_huge_cycles);
 
 // Histograms of compaction events.
 MM_STATS_PROC_CREATE_HIST(mm_direct_compaction_cycles);
@@ -357,6 +372,8 @@ void mm_stats_init(void)
     MM_STATS_INIT_HIST(mm_huge_page_fault_create_new_cycles);
     MM_STATS_INIT_HIST(mm_huge_page_fault_clear_cycles);
     MM_STATS_INIT_HIST(mm_huge_page_fault_zero_page_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_fault_wp_cycles);
+    MM_STATS_INIT_HIST(mm_huge_page_fault_cow_copy_huge_cycles);
     MM_STATS_INIT_HIST(mm_direct_compaction_cycles);
     MM_STATS_INIT_HIST(mm_indirect_compaction_cycles);
     MM_STATS_INIT_HIST(mm_direct_reclamation_cycles);
