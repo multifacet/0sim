@@ -345,6 +345,11 @@ MM_STATS_PROC_CREATE_HIST(mm_huge_page_promotion_work_cycles);
 // page. Only includes successful operations.
 MM_STATS_PROC_CREATE_HIST(mm_huge_page_promotion_copy_pages_cycles);
 
+// Histograms of process_huge_page, which is used for copying or clearing whole
+// huge pages.
+MM_STATS_PROC_CREATE_HIST(mm_process_huge_page_cycles);
+MM_STATS_PROC_CREATE_HIST(mm_process_huge_page_single_page_cycles);
+
 void mm_stats_init(void)
 {
     MM_STATS_INIT_HIST(mm_base_page_fault_cycles);
@@ -358,4 +363,6 @@ void mm_stats_init(void)
     MM_STATS_INIT_HIST(mm_huge_page_promotion_scanning_cycles);
     MM_STATS_INIT_HIST(mm_huge_page_promotion_work_cycles);
     MM_STATS_INIT_HIST(mm_huge_page_promotion_copy_pages_cycles);
+    MM_STATS_INIT_HIST(mm_process_huge_page_cycles);
+    MM_STATS_INIT_HIST(mm_process_huge_page_single_page_cycles);
 }

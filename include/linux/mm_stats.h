@@ -23,5 +23,7 @@ extern struct mm_hist mm_direct_reclamation_cycles;
 extern struct mm_hist mm_huge_page_promotion_scanning_cycles;
 extern struct mm_hist mm_huge_page_promotion_work_cycles;
 extern struct mm_hist mm_huge_page_promotion_copy_pages_cycles;
+extern struct mm_hist mm_process_huge_page_cycles;
+extern struct mm_hist mm_process_huge_page_single_page_cycles;
 
 #endif
