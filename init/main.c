@@ -93,6 +93,7 @@
 #include <linux/rodata_test.h>
 #include <linux/jump_label.h>
 #include <linux/mem_encrypt.h>
+#include <linux/eager_paging.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -1169,6 +1170,8 @@ void console_on_rootfs(void)
 
 static noinline void __init kernel_init_freeable(void)
 {
+	eager_paging_init();
+
 	/*
 	 * Wait until kthreadd is all set-up.
 	 */

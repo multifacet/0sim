@@ -1373,6 +1373,11 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	struct mm_struct *mm = current->mm;
 	int pkey = 0;
 
+	// markm: check if eager paging is on for this address space. If it is,
+	// then add MAP_POPULATE.
+	if (mm->eager_paging)
+		flags |= MAP_POPULATE;
+
 	*populate = 0;
 
 	if (!len)

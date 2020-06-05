@@ -1032,6 +1032,11 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 #endif
 	mm_init_uprobes_state(mm);
 
+	// markm: we set this to false here. We will later update the flag if
+	// needed in `setup_new_exec` and it will be copied during `dup_mm` in
+	// fork.
+	mm->eager_paging = false;
+
 	if (current->mm) {
 		mm->flags = current->mm->flags & MMF_INIT_MASK;
 		mm->def_flags = current->mm->def_flags & VM_INIT_DEF_MASK;

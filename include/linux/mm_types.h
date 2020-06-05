@@ -526,6 +526,13 @@ struct mm_struct {
 		struct work_struct async_put_work;
 	} __randomize_layout;
 
+	/* markm: a flag to indicate that this process and any children should
+	 * use eager paging.
+	 *
+	 * The flag is set during exec and copied during fork.
+	 */
+	bool eager_paging;
+
 	/*
 	 * The mm_cpumask needs to be at the end of mm_struct, because it
 	 * is dynamically sized based on nr_cpu_ids.

@@ -62,6 +62,7 @@
 #include <linux/oom.h>
 #include <linux/compat.h>
 #include <linux/vmalloc.h>
+#include <linux/eager_paging.h>
 
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
@@ -1332,6 +1333,9 @@ EXPORT_SYMBOL(would_dump);
 
 void setup_new_exec(struct linux_binprm * bprm)
 {
+	bool is_eager = false;
+	bool is_parent_eager = false;
+
 	/*
 	 * Once here, prepare_binrpm() will not be called any more, so
 	 * the final state of setuid/setgid/fscaps can be merged into the
@@ -1379,6 +1383,19 @@ void setup_new_exec(struct linux_binprm * bprm)
 	 * some architectures like powerpc
 	 */
 	current->mm->task_size = TASK_SIZE;
+
+	// markm: init eager_paging flag here if either the command matches the
+	// eager_paging command or the parent is using eager paging.
+	is_eager = is_eager_paging_process(current->comm);
+	is_parent_eager = current && current->real_parent
+		&& current->real_parent->mm
+		&& current->real_parent->mm->eager_paging;
+	current->mm->eager_paging = is_eager || is_parent_eager;
+	if (current->mm->eager_paging) {
+		pr_info("Turning on eager paging for (%d) \"%s\" (%d %d)\n",
+				current->pid, current->comm, is_eager,
+				is_parent_eager);
+	}
 
 	/* An exec changes our domain. We are no longer part of the thread
 	   group */
