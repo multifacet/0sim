@@ -94,6 +94,7 @@
 #include <linux/jump_label.h>
 #include <linux/mem_encrypt.h>
 #include <linux/eager_paging.h>
+#include <linux/mm_stats.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -1192,6 +1193,8 @@ static noinline void __init kernel_init_freeable(void)
 	workqueue_init();
 
 	init_mm_internals();
+
+    mm_stats_init();
 
 	do_pre_smp_initcalls();
 	lockup_detector_init();

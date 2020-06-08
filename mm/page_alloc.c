@@ -68,6 +68,7 @@
 #include <linux/lockdep.h>
 #include <linux/nmi.h>
 #include <linux/psi.h>
+#include <linux/mm_stats.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
@@ -3880,9 +3881,12 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	struct page *page = NULL;
 	unsigned long pflags;
 	unsigned int noreclaim_flag;
+    u64 start;
 
 	if (!order)
 		return NULL;
+
+    start = rdtsc();
 
 	psi_memstall_enter(&pflags);
 	noreclaim_flag = memalloc_noreclaim_save();
@@ -3906,6 +3910,9 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	/* Try get a page from the freelist if available */
 	if (!page)
 		page = get_page_from_freelist(gfp_mask, order, alloc_flags, ac);
+
+    // The rest is fairly cheap
+    mm_stats_hist_measure(&mm_direct_compaction_cycles, rdtsc() - start);
 
 	if (page) {
 		struct zone *zone = page_zone(page);
@@ -4130,10 +4137,13 @@ __alloc_pages_direct_reclaim(gfp_t gfp_mask, unsigned int order,
 {
 	struct page *page = NULL;
 	bool drained = false;
+	u64 start = rdtsc();
 
 	*did_some_progress = __perform_reclaim(gfp_mask, order, ac);
-	if (unlikely(!(*did_some_progress)))
+	if (unlikely(!(*did_some_progress))) {
+		mm_stats_hist_measure(&mm_direct_reclamation_cycles, rdtsc() - start);
 		return NULL;
+	}
 
 retry:
 	page = get_page_from_freelist(gfp_mask, order, alloc_flags, ac);
@@ -4149,6 +4159,8 @@ retry:
 		drained = true;
 		goto retry;
 	}
+
+	mm_stats_hist_measure(&mm_direct_reclamation_cycles, rdtsc() - start);
 
 	return page;
 }

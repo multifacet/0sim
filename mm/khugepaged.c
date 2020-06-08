@@ -18,6 +18,7 @@
 #include <linux/page_idle.h>
 #include <linux/swapops.h>
 #include <linux/shmem_fs.h>
+#include <linux/mm_stats.h>
 
 #include <asm/tlb.h>
 #include <asm/pgalloc.h>
@@ -648,6 +649,7 @@ static void __collapse_huge_page_copy(pte_t *pte, struct page *page,
 				      unsigned long address,
 				      spinlock_t *ptl)
 {
+	u64 start = rdtsc();
 	pte_t *_pte;
 	for (_pte = pte; _pte < pte + HPAGE_PMD_NR;
 				_pte++, page++, address += PAGE_SIZE) {
@@ -690,6 +692,8 @@ static void __collapse_huge_page_copy(pte_t *pte, struct page *page,
 			free_page_and_swap_cache(src_page);
 		}
 	}
+
+	mm_stats_hist_measure(&mm_huge_page_promotion_copy_pages_cycles, rdtsc() - start);
 }
 
 static void khugepaged_alloc_sleep(void)
@@ -958,6 +962,7 @@ static void collapse_huge_page(struct mm_struct *mm,
 	struct vm_area_struct *vma;
 	struct mmu_notifier_range range;
 	gfp_t gfp;
+	u64 start = rdtsc();
 
 	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
 
@@ -1099,6 +1104,9 @@ static void collapse_huge_page(struct mm_struct *mm,
 	spin_unlock(pmd_ptl);
 
 	*hpage = NULL;
+
+	// The rest is cheap.
+	mm_stats_hist_measure(&mm_huge_page_promotion_work_cycles, rdtsc() - start);
 
 	khugepaged_pages_collapsed++;
 	result = SCAN_SUCCEED;
@@ -2063,6 +2071,7 @@ static void khugepaged_do_scan(void)
 	unsigned int progress = 0, pass_through_head = 0;
 	unsigned int pages = khugepaged_pages_to_scan;
 	bool wait = true;
+	u64 start = rdtsc();
 
 	barrier(); /* write khugepaged_pages_to_scan to local stack */
 
@@ -2089,6 +2098,8 @@ static void khugepaged_do_scan(void)
 
 	if (!IS_ERR_OR_NULL(hpage))
 		put_page(hpage);
+
+	mm_stats_hist_measure(&mm_huge_page_promotion_scanning_cycles, rdtsc() - start);
 }
 
 static bool khugepaged_should_wakeup(void)

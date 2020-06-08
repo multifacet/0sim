@@ -18,6 +18,7 @@
 #include <linux/uaccess.h>		/* faulthandler_disabled()	*/
 #include <linux/efi.h>			/* efi_recover_from_page_fault()*/
 #include <linux/mm_types.h>
+#include <linux/mm_stats.h>
 
 #include <asm/cpufeature.h>		/* boot_cpu_has, ...		*/
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
@@ -398,7 +399,7 @@ NOKPROBE_SYMBOL(vmalloc_fault);
 
 #ifdef CONFIG_CPU_SUP_AMD
 static const char errata93_warning[] =
-KERN_ERR 
+KERN_ERR
 "******* Your BIOS seems to not contain a fix for K8 errata #93\n"
 "******* Working around it, but it may cause SEGVs or burn power.\n"
 "******* Please consider a BIOS update.\n"
@@ -1277,9 +1278,12 @@ do_kern_addr_fault(struct pt_regs *regs, unsigned long hw_error_code,
 }
 NOKPROBE_SYMBOL(do_kern_addr_fault);
 
-/* Handle faults in the user portion of the address space */
+/* Handle faults in the user portion of the address space
+ *
+ * (markm) returns true if the page fault resulted in a huge page allocation.
+ */
 static inline
-void do_user_addr_fault(struct pt_regs *regs,
+bool do_user_addr_fault(struct pt_regs *regs,
 			unsigned long hw_error_code,
 			unsigned long address)
 {
@@ -1288,13 +1292,14 @@ void do_user_addr_fault(struct pt_regs *regs,
 	struct mm_struct *mm;
 	vm_fault_t fault, major = 0;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
+    bool is_huge = false;
 
 	tsk = current;
 	mm = tsk->mm;
 
 	/* kprobes don't want to hook the spurious faults: */
 	if (unlikely(kprobe_page_fault(regs, X86_TRAP_PF)))
-		return;
+		return false;
 
 	/*
 	 * Reserved bits are never expected to be set on
@@ -1315,7 +1320,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 		     !(regs->flags & X86_EFLAGS_AC)))
 	{
 		bad_area_nosemaphore(regs, hw_error_code, address);
-		return;
+		return false;
 	}
 
 	/*
@@ -1324,7 +1329,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 */
 	if (unlikely(faulthandler_disabled() || !mm)) {
 		bad_area_nosemaphore(regs, hw_error_code, address);
-		return;
+		return false;
 	}
 
 	/*
@@ -1363,7 +1368,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 */
 	if (is_vsyscall_vaddr(address)) {
 		if (emulate_vsyscall(hw_error_code, regs, address))
-			return;
+			return false;
 	}
 #endif
 
@@ -1386,7 +1391,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 			 * which we do not expect faults.
 			 */
 			bad_area_nosemaphore(regs, hw_error_code, address);
-			return;
+			return false;
 		}
 retry:
 		down_read(&mm->mmap_sem);
@@ -1402,17 +1407,17 @@ retry:
 	vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
 		bad_area(regs, hw_error_code, address);
-		return;
+		return false;
 	}
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
 		bad_area(regs, hw_error_code, address);
-		return;
+		return false;
 	}
 	if (unlikely(expand_stack(vma, address))) {
 		bad_area(regs, hw_error_code, address);
-		return;
+		return false;
 	}
 
 	/*
@@ -1422,7 +1427,7 @@ retry:
 good_area:
 	if (unlikely(access_error(hw_error_code, vma))) {
 		bad_area_access_error(regs, hw_error_code, address, vma);
-		return;
+		return false;
 	}
 
 	/*
@@ -1441,6 +1446,8 @@ good_area:
 	fault = handle_mm_fault(vma, address, flags);
 	major |= fault & VM_FAULT_MAJOR;
 
+    is_huge = !(fault & (VM_FAULT_OOM | VM_FAULT_BASE_PAGE));
+
 	/*
 	 * If we need to retry the mmap_sem has already been released,
 	 * and if there is a fatal signal pending there is no guarantee
@@ -1457,17 +1464,17 @@ good_area:
 
 		/* User mode? Just return to handle the fatal exception */
 		if (flags & FAULT_FLAG_USER)
-			return;
+			return is_huge;
 
 		/* Not returning to user mode? Handle exceptions or die: */
 		no_context(regs, hw_error_code, address, SIGBUS, BUS_ADRERR);
-		return;
+		return is_huge;
 	}
 
 	up_read(&mm->mmap_sem);
 	if (unlikely(fault & VM_FAULT_ERROR)) {
 		mm_fault_error(regs, hw_error_code, address, fault);
-		return;
+		return is_huge;
 	}
 
 	/*
@@ -1483,27 +1490,33 @@ good_area:
 	}
 
 	check_v8086_mode(regs, address, tsk);
+
+    return is_huge;
 }
 NOKPROBE_SYMBOL(do_user_addr_fault);
 
 /*
  * Explicitly marked noinline such that the function tracer sees this as the
  * page_fault entry point.
+ *
+ * (markm) returns true if the page fault resulted in a huge page allocation.
  */
-static noinline void
+static noinline bool
 __do_page_fault(struct pt_regs *regs, unsigned long hw_error_code,
 		unsigned long address)
 {
 	prefetchw(&current->mm->mmap_sem);
 
 	if (unlikely(kmmio_fault(regs, address)))
-		return;
+		return false;
 
 	/* Was the fault on kernel-controlled part of the address space? */
-	if (unlikely(fault_in_kernel_space(address)))
+	if (unlikely(fault_in_kernel_space(address))) {
 		do_kern_addr_fault(regs, hw_error_code, address);
-	else
-		do_user_addr_fault(regs, hw_error_code, address);
+        return false;
+    } else {
+		return do_user_addr_fault(regs, hw_error_code, address);
+    }
 }
 NOKPROBE_SYMBOL(__do_page_fault);
 
@@ -1524,10 +1537,19 @@ dotraplinkage void
 do_page_fault(struct pt_regs *regs, unsigned long error_code, unsigned long address)
 {
 	enum ctx_state prev_state;
+    bool huge;
+
+    u64 start = rdtsc();
 
 	prev_state = exception_enter();
 	trace_page_fault_entries(regs, error_code, address);
-	__do_page_fault(regs, error_code, address);
+	huge = __do_page_fault(regs, error_code, address);
 	exception_exit(prev_state);
+
+    if (huge) {
+        mm_stats_hist_measure(&mm_huge_page_fault_cycles, rdtsc() - start);
+    } else {
+        mm_stats_hist_measure(&mm_base_page_fault_cycles, rdtsc() - start);
+    }
 }
 NOKPROBE_SYMBOL(do_page_fault);

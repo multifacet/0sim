@@ -71,6 +71,7 @@
 #include <linux/dax.h>
 #include <linux/oom.h>
 #include <linux/numa.h>
+#include <linux/mm_stats.h>
 
 #include <trace/events/kmem.h>
 
@@ -4068,6 +4069,8 @@ retry_pud:
 		if (!(ret & VM_FAULT_FALLBACK))
 			return ret;
 	} else {
+        // (markm) Entry is already present.
+
 		pud_t orig_pud = *vmf.pud;
 
 		barrier();
@@ -4099,6 +4102,8 @@ retry_pud:
 		if (!(ret & VM_FAULT_FALLBACK))
 			return ret;
 	} else {
+        // (markm) Entry is already present.
+
 		pmd_t orig_pmd = *vmf.pmd;
 
 		barrier();
@@ -4113,6 +4118,8 @@ retry_pud:
 			if (pmd_protnone(orig_pmd) && vma_is_accessible(vma))
 				return do_huge_pmd_numa_page(&vmf, orig_pmd);
 
+			// TODO(markm): wp_huge_pmd/pud are for huge COW
+			// faults. Should add mm-econ logic here too.
 			if (dirty && !pmd_write(orig_pmd)) {
 				ret = wp_huge_pmd(&vmf, orig_pmd);
 				if (!(ret & VM_FAULT_FALLBACK))
@@ -4124,7 +4131,7 @@ retry_pud:
 		}
 	}
 
-	return handle_pte_fault(&vmf);
+	return handle_pte_fault(&vmf) | VM_FAULT_BASE_PAGE;
 }
 
 /*
@@ -4614,6 +4621,9 @@ static inline void process_huge_page(
 	unsigned long addr = addr_hint &
 		~(((unsigned long)pages_per_huge_page << PAGE_SHIFT) - 1);
 
+	u64 start = rdtsc();
+	u64 start_single;
+
 	/* Process target subpage last to keep its cache lines hot */
 	might_sleep();
 	n = (addr_hint - addr) / PAGE_SIZE;
@@ -4624,7 +4634,11 @@ static inline void process_huge_page(
 		/* Process subpages at the end of huge page */
 		for (i = pages_per_huge_page - 1; i >= 2 * n; i--) {
 			cond_resched();
+			start_single = rdtsc();
 			process_subpage(addr + i * PAGE_SIZE, i, arg);
+			mm_stats_hist_measure(
+				&mm_process_huge_page_single_page_cycles,
+				rdtsc() - start_single);
 		}
 	} else {
 		/* If target subpage in second half of huge page */
@@ -4633,7 +4647,11 @@ static inline void process_huge_page(
 		/* Process subpages at the begin of huge page */
 		for (i = 0; i < base; i++) {
 			cond_resched();
+			start_single = rdtsc();
 			process_subpage(addr + i * PAGE_SIZE, i, arg);
+			mm_stats_hist_measure(
+				&mm_process_huge_page_single_page_cycles,
+				rdtsc() - start_single);
 		}
 	}
 	/*
@@ -4645,10 +4663,21 @@ static inline void process_huge_page(
 		int right_idx = base + 2 * l - 1 - i;
 
 		cond_resched();
+		start_single = rdtsc();
 		process_subpage(addr + left_idx * PAGE_SIZE, left_idx, arg);
+		mm_stats_hist_measure(
+			&mm_process_huge_page_single_page_cycles,
+			rdtsc() - start_single);
+
 		cond_resched();
+		start_single = rdtsc();
 		process_subpage(addr + right_idx * PAGE_SIZE, right_idx, arg);
+		mm_stats_hist_measure(
+			&mm_process_huge_page_single_page_cycles,
+			rdtsc() - start_single);
 	}
+
+	mm_stats_hist_measure(&mm_process_huge_page_cycles, rdtsc() - start);
 }
 
 static void clear_gigantic_page(struct page *page,
@@ -4678,6 +4707,7 @@ void clear_huge_page(struct page *page,
 {
 	unsigned long addr = addr_hint &
 		~(((unsigned long)pages_per_huge_page << PAGE_SHIFT) - 1);
+	u64 start = rdtsc();
 
 	if (unlikely(pages_per_huge_page > MAX_ORDER_NR_PAGES)) {
 		clear_gigantic_page(page, addr, pages_per_huge_page);
@@ -4685,6 +4715,8 @@ void clear_huge_page(struct page *page,
 	}
 
 	process_huge_page(addr_hint, pages_per_huge_page, clear_subpage, page);
+
+	mm_stats_hist_measure(&mm_huge_page_fault_clear_cycles, rdtsc() - start);
 }
 
 static void copy_user_gigantic_page(struct page *dst, struct page *src,
@@ -4731,6 +4763,7 @@ void copy_user_huge_page(struct page *dst, struct page *src,
 		.src = src,
 		.vma = vma,
 	};
+	u64 start = rdtsc();
 
 	if (unlikely(pages_per_huge_page > MAX_ORDER_NR_PAGES)) {
 		copy_user_gigantic_page(dst, src, addr, vma,
@@ -4739,6 +4772,8 @@ void copy_user_huge_page(struct page *dst, struct page *src,
 	}
 
 	process_huge_page(addr_hint, pages_per_huge_page, copy_subpage, &arg);
+
+	mm_stats_hist_measure(&mm_huge_page_fault_cow_copy_huge_cycles, rdtsc() - start);
 }
 
 long copy_huge_page_from_user(struct page *dst_page,
