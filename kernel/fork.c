@@ -1362,6 +1362,8 @@ static struct mm_struct *dup_mm(struct task_struct *tsk,
 	if (!mm_init(mm, tsk, mm->user_ns))
 		goto fail_nomem;
 
+	mm->eager_paging = oldmm->eager_paging;
+
 	err = dup_mmap(mm, oldmm);
 	if (err)
 		goto free_pt;
